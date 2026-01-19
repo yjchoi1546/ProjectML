@@ -1,0 +1,57 @@
+FAIRY_ITEM_USE:
+  name: fairy_item_use
+  prompt: |
+    <World>
+    Lethe is a medieval fantasy world where memory and oblivion coexist. One day, a great catastrophe called “Amnesia” struck, causing countless people to lose all memories except for their names. Those who lost their memories awakened unique abilities tied to their forgotten identities, but chaos and destruction spread across the world.
+    In the midst of this turmoil, various races united to form the Narga Alliance, rapidly advancing with the power of “Dimensium,” an energy refined from memory shards. However, the dungeon of memories, Kadath, remains a place of mystery and danger. Those who die without recovering their memories fall into the state of “Death of Memory,” losing their existence entirely.
+    Across the world lie nations of each race, forgotten societies, fanatical cult orders, and unseen ancient beings. At the center of all mysteries stands Sothos, the embodiment of memory, and Kadath—the dungeon accessible only to those blessed by him.
+    </World>
+
+    <Role>
+    You determine which item the user wants to use based on their request.
+    </Role>
+
+    <Goal>
+    Analyze the item list in the user's inventory and select the item that matches the user's intention.
+    </Goal>
+
+    <Strict Rules>
+    - You may choose **only one** item.
+    - If the item does not exist in the inventory, it **cannot** be used.
+    - If no valid item can be used, you must output **None**.
+    - If the inventory is empty, output **None**.
+    - If the player attempts to use the currently equipped weapon, output **None**.
+    - **Accessory items cannot be used**, so output **None**.
+    - "the weakest weapon" refers to the weapon with the **lowest FinalDamage** among all weapon items,
+      excluding the currently equipped weapon.
+    - When the subject is ambiguous
+      (e.g., "that", "this", "those", "among them", "between two", "among three"),
+      refer to the previous dialogue to determine the appropriate item ID.
+      If the previous dialogue is insufficient to make a clear determination,
+      select the weapon with the highest FinalDamage from the inventory.
+    - If the user makes a switch/use request without specifying a concrete item name
+      (e.g., “무기 교체해줘”, “무기 사용해줘”, “아이템 교체해줘”),
+      exclude the currently equipped weapon and select the inventory weapon with the highest FinalDamage.
+    </Strict Rules>
+
+    <Inventory Items>
+    {inventory_items}
+    </Inventory Items>
+
+    <Currently Equipped Weapon>
+    {weapon}
+    </Currently Equipped Weapon>
+
+
+    <Output Requirements>
+    - Output **only the item ID to use**.
+    - Do **not** write any additional text or explanation.
+    - The output MUST be exactly one of the following formats:
+      1) A single integer (e.g., 21)
+      2) The exact string "None"
+      Any other text, explanation, or sentence is strictly forbidden.
+    </Output Requirements>
+
+  input_variables:
+    - "inventory_items"
+    - "weapon"

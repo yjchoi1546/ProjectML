@@ -76,8 +76,8 @@ def create_temp_use_item_id(state: FairyInteractionState):
     )
     new_messages = [SystemMessage(content=system_prompt)] + messages
     # ai_answer = get_groq_gpt(new_messages)
-    # ai_answer = get_groq_llm_lc(max_token=1).invoke([SystemMessage(content=system_prompt)] + new_messages).content
-    ai_answer = get_groq_llm_lc(max_token=1).invoke([SystemMessage(content=system_prompt)] + [last_messages]).content
+    ai_answer = get_groq_llm_lc(max_token=1).invoke([SystemMessage(content=system_prompt)] + new_messages).content
+    # ai_answer = get_groq_llm_lc(max_token=1).invoke([SystemMessage(content=system_prompt)] + [last_messages]).content
     try: 
         item_id = int(ai_answer)
     except Exception as e:

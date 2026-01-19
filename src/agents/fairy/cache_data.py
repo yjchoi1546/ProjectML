@@ -332,7 +332,7 @@ MONSTER_INFOS = [
     {
         "monsterId": 5,
         "monsterType": 1,
-        "monsterName": "천번전 언데드",
+        "monsterName": "천번 찔린 언데드",
         "hp": 10,
         "speed": 300,
         "attack": 60,
@@ -340,7 +340,7 @@ MONSTER_INFOS = [
         "attackRange": 170,
         "staggerGage": 100,
         "exp": 25,
-        "weaknesses": "넉백, 타격, 빠른 공격속도",
+        "weaknesses": "넉백, 타격, 빠른 공격속도, 10번 타격",
         "strengths": "강한 한방, 느린 공격속도",
         "boss_pattern": None,
     },

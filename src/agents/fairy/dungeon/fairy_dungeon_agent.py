@@ -241,16 +241,16 @@ async def fairy_action(state: FairyDungeonState):
     #         ]
     #     )
 
-    # ai_answer = action_llm.invoke(
-    #     [SystemMessage(content=system_prompt)]
-    #     + messages
-    #     + [HumanMessage(content=human_prompt)]
-    # )
-
     ai_answer = action_llm.invoke(
         [SystemMessage(content=system_prompt)]
+        + messages
         + [HumanMessage(content=human_prompt)]
     )
+
+    # ai_answer = action_llm.invoke(
+    #     [SystemMessage(content=system_prompt)]
+    #     + [HumanMessage(content=human_prompt)]
+    # )
         
     if contains_hanja(ai_answer.content):
         ai_answer.content = replace_hanja_naively(ai_answer.content)
