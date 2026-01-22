@@ -1,5 +1,3 @@
-# Keyword ID mapping for monster/heroine attributes
-# Codes as provided by user
 KEYWORD_MAP = {
     0: "high_defense",
     1: "low_defense",

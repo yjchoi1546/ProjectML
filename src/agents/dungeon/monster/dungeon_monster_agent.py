@@ -3,31 +3,19 @@ from enums.LLM import LLM
 from agents.dungeon.dungeon_state import DungeonMonsterState, MonsterStrategyParser
 from agents.dungeon.monster.monster_database import MONSTER_DATABASE, MonsterData
 from core.game_dto.StatData import StatData
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Any
+from prompts.promptmanager import PromptManager
+from prompts.prompt_type.dungeon.DungeonPromptType import DungeonPromptType
 import random
+import math
 from agents.dungeon.monster.monster_tags import KEYWORD_MAP, keywords_to_tags
 
 llm = init_chat_model(model=LLM.GPT5_MINI, temperature=0.7)
 
-from prompts.promptmanager import PromptManager
-from prompts.prompt_type.dungeon.DungeonPromptType import DungeonPromptType
+
 
 
 def calculate_combat_score_node(state: DungeonMonsterState) -> DungeonMonsterState:
-    """
-    전투력을 계산하는 노드 (단일/멀티 플레이어 자동 감지)
-
-    전투력 계산식:
-    - HP 가중치: 0.3
-    - 공격력(strength + dexterity) 가중치: 0.4
-    - 공격속도 가중치: 0.15
-    - 치명타 확률 가중치: 0.1
-    - 스킬 데미지 배율 가중치: 0.05
-
-    Returns:
-        - 단일 플레이어: 해당 플레이어의 전투력
-        - 멀티 플레이어: 파티 평균 전투력
-    """
     heroine_stat = state.get("heroine_stat")
 
     if not heroine_stat:
@@ -85,7 +73,6 @@ def _calculate_single_combat_score(stat: StatData) -> float:
         hp_score + attack_score + attack_speed_score + crit_score + skill_damage_score
     )
 
-    # 추가: 스킬/키워드 보정 (stat.keywords: List[str] 또는 stat.skill_keywords)
     bonus = 0.0
     hero_keywords = []
     if hasattr(stat, "keywords") and stat.keywords:
@@ -93,7 +80,6 @@ def _calculate_single_combat_score(stat: StatData) -> float:
     elif hasattr(stat, "skill_keywords") and stat.skill_keywords:
         hero_keywords = list(stat.skill_keywords)
 
-    # 간단한 규칙: 원거리/근거리/빠른공격 등 키워드에 따라 보정
     hero_keywords_lower = [k.lower() for k in hero_keywords]
     if any("fast" in k or "빠른" in k for k in hero_keywords_lower):
         bonus += attack_speed_score * 0.15
@@ -106,10 +92,6 @@ def _calculate_single_combat_score(stat: StatData) -> float:
 
 
 def _ensure_stat_dict(stat: dict) -> dict:
-    """
-    Ensure the provided heroine stat dict contains required keys for StatData.
-    Fill sensible defaults for any missing fields to avoid Pydantic validation errors.
-    """
     if stat is None:
         stat = {}
     s = dict(stat)
@@ -120,7 +102,6 @@ def _ensure_stat_dict(stat: dict) -> dict:
     s.setdefault("attackSpeed", 1.0)
     s.setdefault("critChance", 0.0)
     s.setdefault("skillDamageMultiplier", 1.0)
-    # optional: skill/keyword list provided by caller
     s.setdefault("keywords", [])
     s.setdefault("skill_keywords", [])
     return s
@@ -187,6 +168,7 @@ def llm_strategy_node(state: DungeonMonsterState) -> DungeonMonsterState:
     print("[llm_strategy_node DEBUG] floor type:", type(current_floor))
     print("[llm_strategy_node DEBUG] floor value:", current_floor)
 
+    MIN_ROOM_THREAT = 50.0  # 방별 최소 위협도 (적절히 조정)
     try:
         # 프롬프트 생성
         try:
@@ -227,241 +209,252 @@ def llm_strategy_node(state: DungeonMonsterState) -> DungeonMonsterState:
 
 
 def select_monsters_node(state: DungeonMonsterState) -> DungeonMonsterState:
+    # ===== 1. 입력값 준비 =====
     combat_score = state["combat_score"]
     llm_strategy = state["llm_strategy"]
     monster_db = state.get("monster_db", MONSTER_DATABASE)
-    dungeon_data = state.get("dungeon_data", {})
+    dungeon_data = (
+        state.get("dungeon_data")
+        or state.get("dungeon_base_data")
+        or state.get("filled_dungeon_data")
+        or {}
+    )
+
+    rooms = (
+        dungeon_data.get("rooms") if isinstance(dungeon_data.get("rooms"), list) else []
+    )
+    for r in rooms:
+        if "room_id" not in r and "roomId" in r:
+            r["room_id"] = r.get("roomId")
+        if "type" not in r and "room_type" in r:
+            try:
+                r["type"] = int(r.get("room_type"))
+            except Exception:
+                pass
+        if "room_type" not in r and "type" in r:
+            r["room_type"] = r.get("type")
+        if "monsters" in r and isinstance(r["monsters"], list):
+            norm_monsters = []
+            for m in r["monsters"]:
+                if isinstance(m, dict):
+                    if "monsterId" in m and "monster_id" not in m:
+                        m["monster_id"] = m.get("monsterId")
+                    if "posX" in m and "pos_x" not in m:
+                        m["pos_x"] = m.get("posX")
+                    if "posY" in m and "pos_y" not in m:
+                        m["pos_y"] = m.get("posY")
+                norm_monsters.append(m)
+            r["monsters"] = norm_monsters
+
+    if rooms:
+        dungeon_data["rooms"] = rooms
+        
+    player_count = 1
+    try:
+        pc = state.get("player_count")
+        if isinstance(pc, int) and pc > 0:
+            player_count = pc
+        else:
+            heroine_stat = state.get("heroine_stat")
+            if isinstance(heroine_stat, list) and len(heroine_stat) > 0:
+                player_count = len(heroine_stat)
+            else:
+                # try dungeon_data player_ids
+                pdlist = dungeon_data.get("player_ids") or dungeon_data.get("playerIds")
+                if isinstance(pdlist, list) and len(pdlist) > 0:
+                    player_count = len(pdlist)
+                else:
+                    player_count = 1
+    except Exception:
+        player_count = 1
 
     difficulty_multiplier = llm_strategy["difficulty_multiplier"]
     preferred_tags = llm_strategy.get("preferred_tags", [])
 
-    # 타겟 위협도 계산 (플레이어 전투력 * 난이도 배율)
-    target_threat = combat_score * difficulty_multiplier
+    normal_monsters = [
+        m for m in monster_db.values() if getattr(m, "monster_type", 0) == 0
+    ]
+    boss_monsters = [
+        m for m in monster_db.values() if getattr(m, "monster_type", 0) == 2
+    ]
+    if normal_monsters:
+        mean_threat = sum(m.threat_level for m in normal_monsters) / len(
+            normal_monsters
+        )
+        min_normal_threat = min(m.threat_level for m in normal_monsters)
+    else:
+        mean_threat = min_normal_threat = 1
+    if boss_monsters:
+        mean_boss_threat = sum(m.threat_level for m in boss_monsters) / len(
+            boss_monsters
+        )
+    else:
+        mean_boss_threat = 1
 
-    print(f"\n[select_monsters_node] 타겟 위협도: {target_threat:.2f}")
-    print(f"[select_monsters_node] 배율: {difficulty_multiplier:.2f}")
+    target_general_threat = combat_score * difficulty_multiplier
+    boss_scale = mean_boss_threat / mean_threat if mean_threat > 0 else 1.0
+    target_boss_threat = combat_score * difficulty_multiplier * boss_scale
 
-    # 보스방과 일반 전투방 분리 (더 관대한 타입 판별)
     rooms = dungeon_data.get("rooms", [])
+    combat_rooms = [
+        room
+        for room in rooms
+        if (
+            room.get("type") == 1
+            or room.get("room_type") == 1
+            or str(room.get("room_type")).lower() == "monster"
+        )
+    ]
+    boss_rooms = [
+        room
+        for room in rooms
+        if (
+            room.get("type") == 4
+            or room.get("room_type") == 4
+            or str(room.get("room_type")).lower() == "boss"
+        )
+    ]
+    n_combat = len(combat_rooms)
+    n_boss = len(boss_rooms)
 
-    def _is_boss_room(room: Dict[str, Any]) -> bool:
-        rt = room.get("room_type") or room.get("roomType") or room.get("type")
-        # Normalize and be permissive: accept 'boss', 'boss_room', numeric 4
-        if isinstance(rt, str):
-            v = rt.strip().lower()
-            return v in ("boss", "boss_room", "b") or "boss" in v
-        if isinstance(rt, int):
-            return rt == 4
-        return False
+    dynamic_min_room_threat = min(
+        (
+            m.threat_level
+            for m in monster_db.values()
+            if getattr(m, "monster_type", 0) == 0
+        ),
+        default=1,
+    )
+    per_room_target = max(
+        target_general_threat / n_combat if n_combat else min_normal_threat,
+        dynamic_min_room_threat,
+    )
 
-    def _is_monster_room(room: Dict[str, Any]) -> bool:
-        rt = room.get("room_type") or room.get("roomType") or room.get("type")
-        if isinstance(rt, str):
-            v = rt.strip().lower()
-            return (
-                v in ("monster", "combat", "battle") or "monster" in v or "combat" in v
+    # ===== 3. 일반 몬스터 배치 =====
+    # compute average room size to use as fallback when a room has no size
+    sizes = [r.get("size") for r in rooms if isinstance(r.get("size"), (int, float))]
+    avg_size = int(round(sum(sizes) / len(sizes))) if sizes else 4
+
+    for room in combat_rooms:
+        room["monsters"] = []
+        room_threat = per_room_target
+
+        # compute room capacity from size and player count: ceil(size * 0.5 * player_count)
+        room_size = (
+            room.get("size") if isinstance(room.get("size"), (int, float)) else avg_size
+        )
+        max_monsters = max(1, math.ceil(room_size * 0.5 * player_count))
+        print(
+            f"[select_monsters_node DEBUG] room_id={room.get('room_id')} room_size={room_size} player_count={player_count} max_monsters={max_monsters}"
+        )
+
+        # 최소 위협도보다 작으면 동적 스케일링 또는 최소값 보장
+        if room_threat < min_normal_threat:
+            scale = room_threat / min_normal_threat
+            weakest = min(
+                [m for m in monster_db.values() if getattr(m, "monster_type", 0) == 0],
+                key=lambda m: m.threat_level,
             )
-        if isinstance(rt, int):
-            return rt == 1
-        return False
+            room["monsters"].append(
+                {"monster_id": weakest.monster_id, "scale": round(scale, 2)}
+            )
+            room["final_threat"] = weakest.threat_level * scale
+            print(
+                f"[select_monsters_node DEBUG] room_id={room.get('room_id')} placed=1/{max_monsters} final_threat={room.get('final_threat')}"
+            )
+        else:
+            # 목표 위협도에 맞게 몬스터 여러 마리 배치 (greedy), 단 방당 최대 수 준수
+            threat_sum = 0
+            attempts = 0
+            normal_pool = [
+                m for m in monster_db.values() if getattr(m, "monster_type", 0) == 0
+            ]
+            while (
+                threat_sum < room_threat
+                and len(room["monsters"]) < max_monsters
+                and attempts < 100
+            ):
+                remaining = room_threat - threat_sum
 
-    boss_rooms = [room for room in rooms if _is_boss_room(room)]
-    combat_rooms = [room for room in rooms if _is_monster_room(room)]
-
-    # Debug: 현재 rooms와 판별된 타입 로그
-    try:
-        print(
-            f"[select_monsters_node] rooms: {[ (r.get('room_id'), r.get('room_type') or r.get('roomType') or r.get('type')) for r in rooms ]}"
-        )
-        print(
-            f"[select_monsters_node] identified boss_rooms: {[r.get('room_id') for r in boss_rooms]}"
-        )
-        print(
-            f"[select_monsters_node] identified combat_rooms: {[r.get('room_id') for r in combat_rooms]}"
-        )
-    except Exception:
-        pass
-
-    # LLM 전략에서 고급 선호도 추출
-    monster_preferences = []
-    avoid_conditions = []
-
-    if "monster_preferences" in llm_strategy:
-        # MonsterPreference 객체를 dict로 변환
-        prefs = llm_strategy["monster_preferences"]
-        if prefs:
-            for pref in prefs:
-                if hasattr(pref, "model_dump"):
-                    monster_preferences.append(pref.model_dump())
-                elif isinstance(pref, dict):
-                    monster_preferences.append(pref)
-
-    if "avoid_conditions" in llm_strategy:
-        avoid_conditions = llm_strategy["avoid_conditions"]
-
-    # preference and avoid-condition summary logging removed per user request
-
-    # 일반 몬스터 선택 (전투방용)
-    # 히로인 키워드/라벨 추출 (숫자 ID 또는 문자열 모두 허용)
-    # 클라에서 제공한 라벨 ID(0..19)를 사용하려면 `keywords` 또는 `keyword_ids` 필드에 숫자 리스트를 넣어주세요.
-    hero_tags = []
-    heroine_stat_state = state.get("heroine_stat")
-
-    def _normalize_hero_keywords(raw):
-        out = []
-        if not raw:
-            return out
-        # list of ints or strings
-        for it in raw:
-            if isinstance(it, int):
-                # convert numeric id to tag via keywords_to_tags
-                mapped = keywords_to_tags([it])
-                if mapped:
-                    out.extend([m.lower() for m in mapped])
-            elif isinstance(it, str):
-                # try to parse numeric string
-                s = it.strip()
-                if s.isdigit():
-                    mapped = keywords_to_tags([int(s)])
-                    out.extend([m.lower() for m in mapped])
+                # 우선: remaining 이하인 후보 중 작은 몬스터 위주로 가중 랜덤 선택
+                cands = [m for m in normal_pool if m.threat_level <= remaining]
+                if cands:
+                    try:
+                        max_t = max(m.threat_level for m in cands)
+                        weights = [(max_t - m.threat_level) + 0.1 for m in cands]
+                        candidate = random.choices(cands, weights=weights, k=1)[0]
+                    except Exception:
+                        candidate = min(cands, key=lambda m: m.threat_level)
                 else:
-                    out.append(s.lower())
-        return out
+                    # 없으면 남은 범위에 가장 근접한 몬스터(위협도 차이가 가장 작은) 선택
+                    candidate = min(
+                        normal_pool, key=lambda m: abs(m.threat_level - remaining)
+                    )
 
-    if isinstance(heroine_stat_state, list):
-        for hs in heroine_stat_state:
-            if isinstance(hs, dict):
-                # accept multiple possible field names from client
-                raw_kw = (
-                    hs.get("keywords")
-                    or hs.get("keyword_ids")
-                    or hs.get("tags")
-                    or hs.get("labels")
-                    or []
+                room["monsters"].append(
+                    {"monster_id": candidate.monster_id, "scale": 1.0}
                 )
-                hero_tags.extend(_normalize_hero_keywords(raw_kw))
-    elif isinstance(heroine_stat_state, dict):
-        raw_kw = (
-            heroine_stat_state.get("keywords")
-            or heroine_stat_state.get("keyword_ids")
-            or heroine_stat_state.get("tags")
-            or heroine_stat_state.get("labels")
-            or []
-        )
-        hero_tags = _normalize_hero_keywords(raw_kw)
+                threat_sum += candidate.threat_level
+                attempts += 1
 
-    # DEBUG: hero tag summary
-    try:
-        print(f"[select_monsters_node] hero_tags: {hero_tags}")
-    except Exception:
-        pass
-
-    # Analyze how hero_tags map to monster weaknesses/strengths across DB
-    try:
-        tag_weak_counts = {t: 0 for t in hero_tags}
-        tag_strong_counts = {t: 0 for t in hero_tags}
-        all_monsters = list(monster_db.values())
-        for m in all_monsters:
-            try:
-                m_weak = (
-                    keywords_to_tags(m.weaknesses)
-                    if getattr(m, "weaknesses", None)
-                    else []
+            # 보장: 최소 1마리 이상 배치 (가능한 경우)
+            if len(room["monsters"]) == 0 and normal_pool:
+                weakest = min(normal_pool, key=lambda m: m.threat_level)
+                room["monsters"].append(
+                    {"monster_id": weakest.monster_id, "scale": 1.0}
                 )
-                m_strong = (
-                    keywords_to_tags(m.strengths)
-                    if getattr(m, "strengths", None)
-                    else []
-                )
-            except Exception:
-                m_weak = []
-                m_strong = []
-            m_weak_l = [x.lower() for x in m_weak]
-            m_strong_l = [x.lower() for x in m_strong]
-            for ht in hero_tags:
-                if ht in m_weak_l:
-                    tag_weak_counts[ht] = tag_weak_counts.get(ht, 0) + 1
-                if ht in m_strong_l:
-                    tag_strong_counts[ht] = tag_strong_counts.get(ht, 0) + 1
+                threat_sum += weakest.threat_level
 
-        print(
-            f"[select_monsters_node] hero tag -> monster weakness counts: {tag_weak_counts}"
-        )
-        print(
-            f"[select_monsters_node] hero tag -> monster strength counts: {tag_strong_counts}"
-        )
-    except Exception:
-        pass
+            room["final_threat"] = threat_sum
+            print(
+                f"[select_monsters_node DEBUG] room_id={room.get('room_id')} placed={len(room['monsters'])}/{max_monsters} final_threat={room.get('final_threat')}"
+            )
 
-    selected_monsters = _select_monsters_by_strategy(
-        monster_db,
-        target_threat,
-        preferred_tags,
-        monster_preferences,
-        avoid_conditions,
-        hero_tags,
-    )
+    # ===== 4. 보스 몬스터 배치 (별도) =====
+    for room in boss_rooms:
+        room["monsters"] = []
+        # 가장 가까운 보스 몬스터 선택
+        boss_candidates = [
+            m for m in monster_db.values() if getattr(m, "monster_type", 0) == 2
+        ]
+        if boss_candidates:
+            boss = min(
+                boss_candidates, key=lambda m: abs(m.threat_level - target_boss_threat)
+            )
+            room["monsters"].append({"monster_id": boss.monster_id, "scale": 1.0})
+            room["final_threat"] = boss.threat_level
+            print(
+                f"[select_monsters_node DEBUG] boss_room_id={room.get('room_id')} selected_boss={boss.monster_id} player_count={player_count} final_threat={room.get('final_threat')}"
+            )
 
-    # 던전 데이터에 몬스터 배치
-    filled_dungeon = _place_monsters_in_rooms(
-        dungeon_data, selected_monsters, combat_rooms, boss_rooms, monster_db
-    )
+    # ===== 5. 결과 요약 =====
+    total_general_actual = sum(room.get("final_threat", 0) for room in combat_rooms)
+    total_boss_actual = sum(room.get("final_threat", 0) for room in boss_rooms)
 
-    # 실제 배치된 총 위협도 계산 (보스 포함)
-    actual_threat = sum(m.threat_level for m in selected_monsters)
-    boss_threat = 0.0
+    # 배치된 몬스터 수 집계
+    normal_monster_count = sum(len(room.get("monsters", [])) for room in combat_rooms)
+    boss_count = sum(1 for room in boss_rooms if room.get("monsters"))
+    has_boss_room = True if len(boss_rooms) > 0 else False
 
-    # 보스 위협도 추가
-    if boss_rooms:
-        boss_monsters = [m for m in monster_db.values() if m.monster_type == 2]
-        if boss_monsters:
-            boss_threat = boss_monsters[0].threat_level  # 첫 번째 보스 기준
-            actual_threat += boss_threat
-
-    difficulty_log = {
-        "model_used": llm.model_name,
-        "combat_score": combat_score,
-        "is_party": isinstance(state["heroine_stat"], list),
-        "player_count": (
-            len(state["heroine_stat"]) if isinstance(state["heroine_stat"], list) else 1
-        ),
-        "ai_multiplier": difficulty_multiplier,
-        "ai_reasoning": llm_strategy["reasoning"],
-        "preferred_tags": preferred_tags,
-        "hero_tags": hero_tags,
-        "hero_tag_weakness_counts": (
-            tag_weak_counts if "tag_weak_counts" in locals() else {}
-        ),
-        "hero_tag_strength_counts": (
-            tag_strong_counts if "tag_strong_counts" in locals() else {}
-        ),
-        "target_threat": target_threat,
-        "actual_threat": actual_threat,
-        "boss_threat": boss_threat,
-        "normal_monster_count": len(selected_monsters),
-        "has_boss_room": len(boss_rooms) > 0,
-        "monster_details": [
-            {
-                "id": m.monster_id,
-                "name": m.monster_name,
-                "type": m.monster_type,
-                "threat": m.threat_level,
-            }
-            for m in selected_monsters
-        ],
+    # ===== 6. 결과 반환 =====
+    return {
+        "filled_dungeon_data": dungeon_data,
+        "difficulty_log": {
+            "combat_score": combat_score,
+            "difficulty_multiplier": difficulty_multiplier,
+            "target_general_threat": target_general_threat,
+            "target_boss_threat": target_boss_threat,
+            "total_general_actual": total_general_actual,
+            "total_boss_actual": total_boss_actual,
+            "per_room_target": per_room_target,
+            "min_normal_threat": min_normal_threat,
+            "n_combat": n_combat,
+            "n_boss": n_boss,
+            "has_boss_room": has_boss_room,
+            "normal_monster_count": normal_monster_count,
+            "boss_count": boss_count,
+        },
     }
-
-    print(f"[select_monsters_node] 일반 몬스터 수: {len(selected_monsters)}")
-    print(f"[select_monsters_node] 보스방 존재: {len(boss_rooms) > 0}")
-    print(
-        f"[select_monsters_node] 일반 몬스터 위협도: {sum(m.threat_level for m in selected_monsters):.2f}"
-    )
-    if boss_threat > 0:
-        print(f"[select_monsters_node] 보스 위협도: {boss_threat:.2f}")
-    print(f"[select_monsters_node] 총 위협도: {actual_threat:.2f}")
-    print(f"[select_monsters_node] 달성률: {(actual_threat/target_threat*100):.1f}%")
-
-    return {"filled_dungeon_data": filled_dungeon, "difficulty_log": difficulty_log}
 
 
 def _select_monsters_by_strategy(
@@ -503,7 +496,9 @@ def _select_monsters_by_strategy(
     )
 
     try:
-        print("[_select_monsters_by_strategy] 후보 몬스터 목록 (id, name, threat, hp, attack, speed):")
+        print(
+            "[_select_monsters_by_strategy] 후보 몬스터 목록 (id, name, threat, hp, attack, speed):"
+        )
         for m in filtered_monsters:
             try:
                 print(
@@ -536,9 +531,13 @@ def _select_monsters_by_strategy(
             current_threat += m.threat_level
 
         try:
-            print("[_select_monsters_by_strategy] Fallback 적용: 작은 위협도 몬스터로 채움")
+            print(
+                "[_select_monsters_by_strategy] Fallback 적용: 작은 위협도 몬스터로 채움"
+            )
             for m in selected:
-                print(f"  -> {m.monster_id} {m.monster_name} threat={m.threat_level:.2f}")
+                print(
+                    f"  -> {m.monster_id} {m.monster_name} threat={m.threat_level:.2f}"
+                )
         except Exception:
             pass
 
@@ -717,6 +716,8 @@ def _place_monsters_in_rooms(
     # filled_dungeon의 rooms에서 room_id로 매칭하여 직접 수정
     rooms_by_id = {room["room_id"]: room for room in filled_dungeon["rooms"]}
 
+    # (no local avg_size/player_count fallback — use values from surrounding scope or callers)
+
     # 보스방에 보스 몬스터 배치 (최우선)
     if boss_rooms:
         boss_monsters = [m for m in monster_db.values() if m.monster_type == 2]
@@ -765,9 +766,22 @@ def _place_monsters_in_rooms(
         if monster_index >= len(normal_monsters):
             break
 
-        # 방당 몬스터 수 (1~3마리)
+        # 방당 몬스터 수는 room.size와 player_count 기반으로 계산
+        room_ref = combat_room_ref
+        room_size = (
+            room_ref.get("size")
+            if isinstance(room_ref.get("size"), (int, float))
+            else avg_size
+        )
+        players = dungeon_data.get("player_ids") or dungeon_data.get("playerIds") or []
+        pcount = (
+            len(players)
+            if isinstance(players, (list, tuple)) and len(players) > 0
+            else player_count
+        )
         monsters_per_room = min(
-            random.randint(1, 3), len(normal_monsters) - monster_index
+            max(1, math.ceil(room_size * 0.5 * pcount)),
+            len(normal_monsters) - monster_index,
         )
         room_monsters = []
 

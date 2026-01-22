@@ -8,25 +8,19 @@ from datetime import datetime
 import copy
 from langgraph.graph import START, END, StateGraph
 from agents.dungeon.dungeon_state import SuperDungeonState
+from agents.dungeon.monster.dungeon_monster_agent import monster_graph
+from agents.dungeon.event.dungeon_event_agent import (
+        graph_builder as event_graph_builder
+    )
 
 
 # ===== Node 1: Event Processing =====
 def event_node(state: SuperDungeonState) -> Dict[str, Any]:
-    """
-    Event Agent를 실행하는 노드
-    - 히로인 정보와 던전 정보를 기반으로 이벤트 생성
-    """
     print("\n[Event Node] 이벤트 생성 시작...")
 
-    # 실제 Event Agent 호출
-    from agents.dungeon.event.dungeon_event_agent import (
-        graph_builder as event_graph_builder,
-    )
-
     event_graph = event_graph_builder.compile()
-
-    # player_id 추출 (player_ids가 있으면 첫 번째, 없으면 None)
     player_id = None
+    
     # 다양한 위치에서 player_id를 추출 시도
     if "player_id" in state:
         player_id = state["player_id"]
@@ -59,14 +53,7 @@ def event_node(state: SuperDungeonState) -> Dict[str, Any]:
 
 # ===== Node 2: Monster Balancing =====
 def monster_node(state: SuperDungeonState) -> Dict[str, Any]:
-    """
-    Monster Agent를 실행하는 노드
-    - 던전 맵에 몬스터를 배치하고 밸런싱
-    """
     print("\n[Monster Node] 몬스터 밸런싱 시작...")
-
-    # 실제 Monster Agent 호출
-    from agents.dungeon.monster.dungeon_monster_agent import monster_graph
 
     # Monster Agent 입력 state 구성
     monster_state = {
@@ -108,7 +95,9 @@ def merge_results_node(state: SuperDungeonState) -> Dict[str, Any]:
     """
     print("\n[Merge Node] 결과 병합 시작...")
 
+
     # 1. 각 Agent 결과 가져오기
+    # Monster Agent의 결과(rooms[].monsters)를 무조건 덮어쓴다 (중복/합산 방지)
     filled_dungeon = state.get("filled_dungeon_data", {})
     event_result = state.get("event_result", {})
     difficulty_log = state.get("difficulty_log", {})
@@ -117,6 +106,8 @@ def merge_results_node(state: SuperDungeonState) -> Dict[str, Any]:
     sanitized_dungeon = copy.deepcopy(filled_dungeon)
     for room in sanitized_dungeon.get("rooms", []):
         room.pop("position", None)
+        # 몬스터 배치는 Monster Agent 결과만 반영 (event 등에서 추가된 몬스터가 있으면 무시)
+        # (이미 filled_dungeon이 Monster Agent 결과이므로 별도 합산/append 금지)
 
     # 2. 몬스터 통계 계산
     total_monsters = 0

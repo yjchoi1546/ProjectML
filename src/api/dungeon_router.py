@@ -365,6 +365,11 @@ def balance_dungeon(request: BalanceRequest):
             player_data_list=normalized_players,
             monster_db=MONSTER_DATABASE,
             used_events=request.usedEvents,
+            player_count=(
+                len(request.playerDataList)
+                if isinstance(request.playerDataList, list)
+                else None
+            ),
         )
 
         if not result.get("success"):

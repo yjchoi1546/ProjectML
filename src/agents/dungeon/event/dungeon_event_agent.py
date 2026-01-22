@@ -2,32 +2,27 @@ from langchain.chat_models import init_chat_model
 from enums.LLM import LLM
 from agents.dungeon.dungeon_state import DungeonEventParser
 import random
-
-llm = init_chat_model(model=LLM.GROK_4_FAST_NON_REASONING, temperature=0.5)
-
+from agents.dungeon.event.main_event_scenarios import MAIN_EVENT_SCENARIOS
+from agents.dungeon.event.heroine_scenarios import HEROINE_SCENARIOS
+from agents.dungeon.event import event_rewards_penalties as rewards_module
+from pydantic import BaseModel
+from agents.dungeon.event.event_rewards_penalties import (
+    get_reward_dict,
+    get_penalty_dict)
 from prompts.promptmanager import PromptManager
 from prompts.prompt_type.dungeon.DungeonPromptType import DungeonPromptType
 from agents.dungeon.dungeon_state import DungeonEventState
-from db.RDBRepository import RDBRepository
 from langchain_core.messages import HumanMessage
+from langgraph.graph import START, END, StateGraph
 
+llm = init_chat_model(model=LLM.GROK_4_FAST_NON_REASONING, temperature=0.5)
 
 def heroine_memories_node(state: DungeonEventState) -> DungeonEventState:
-    """
-    히로인의 기억 데이터 로드
-    heroine_scenarios.py에서 heroine_id와 memory_progress에 맞는 기억을 필터링
-    """
-    import time
-
-    total_start = time.time()
-    from agents.dungeon.event.heroine_scenarios import HEROINE_SCENARIOS
 
     heroine_id = state["heroine_data"].get("heroine_id")
     memory_progress = state["heroine_data"].get("memory_progress")
-
     player_id = state.get("player_id") if "player_id" in state else None
 
-    # heroine_id는 int 변환 시도 (str일 때만)
     try:
         heroine_id = int(heroine_id) if isinstance(heroine_id, str) else heroine_id
     except Exception:
@@ -57,21 +52,7 @@ def heroine_memories_node(state: DungeonEventState) -> DungeonEventState:
 
 
 def selected_main_event_node(state: DungeonEventState) -> DungeonEventState:
-    """
-    메인 이벤트 선택 로직
-    1. main_event_scenarios.py에서 이벤트 목록 로드
-    2. used_events 중복 제거
-    3. 랜덤으로 최종 선택
-
-    Note: is_personal=True인 개별 이벤트는 모든 플레이어가 같이 경험하지만,
-          각 플레이어의 히로인 기억에 따라 다른 내러티브가 생성됨
-    """
-    from agents.dungeon.event.main_event_scenarios import MAIN_EVENT_SCENARIOS
-
-    next_floor = state.get("next_floor", 1)
     used_events = state.get("used_events", [])
-
-    # 이미 사용한 event_code 추출
     used_event_codes = [
         evt.get("event_code") for evt in used_events if "event_code" in evt
     ]
@@ -116,17 +97,6 @@ def selected_main_event_node(state: DungeonEventState) -> DungeonEventState:
 
 
 def create_sub_event_node(state: DungeonEventState) -> DungeonEventState:
-    """
-    서브 이벤트 생성 로직
-    - 개별 이벤트(is_personal=True)의 경우: 히로인 기억에 맞춤화된 내러티브 생성
-    - 공통 이벤트(is_personal=False)의 경우: 일반적인 내러티브 생성
-
-    Note: 개별 이벤트는 보상/패널티는 동일하지만, 각 플레이어에게 다른 텍스트가 표시됨
-    """
-
-    # Prepare additional inputs for the prompt (compatibility with updated YAML)
-    from agents.dungeon.event import event_rewards_penalties as rewards_module
-
     heroine_info = state.get("heroine_data", {}) if isinstance(state, dict) else {}
     heroine_name = heroine_info.get("name") or heroine_info.get("heroine_name") or None
     memory_progress = (
@@ -171,9 +141,7 @@ def create_sub_event_node(state: DungeonEventState) -> DungeonEventState:
     try:
         response = parser_llm.invoke(prompts)
     except Exception as e:
-        # LLM 실패 시 안전한 폴백을 반환하여 그래프 전체 중단을 방지
         print(f"[create_sub_event_node] LLM invoke failed: {e}")
-        # 간단한 폴백 내용 구성
         fallback_narrative = (
             (selected_main_event.get("scenario_text")[:200] + "...")
             if isinstance(selected_main_event, dict)
@@ -185,8 +153,6 @@ def create_sub_event_node(state: DungeonEventState) -> DungeonEventState:
 
         response = _Resp()
         response.sub_event_narrative = fallback_narrative
-        # 기본 2개의 선택지 제공 (보상/패널티 없음)
-        from pydantic import BaseModel
 
         class _Choice(BaseModel):
             action: str
@@ -198,12 +164,6 @@ def create_sub_event_node(state: DungeonEventState) -> DungeonEventState:
             _Choice(action="상호작용을 시도한다"),
         ]
         response.expected_outcome = "선택에 따라 간단한 반응이 발생합니다."
-
-    # 보상/패널티 dict 변환 유틸리티 import
-    from agents.dungeon.event.event_rewards_penalties import (
-        get_reward_dict,
-        get_penalty_dict,
-    )
 
     choices = []
     for choice in response.event_choices:
@@ -238,9 +198,7 @@ def create_sub_event_node(state: DungeonEventState) -> DungeonEventState:
     }
 
 
-from langgraph.graph import START, END, StateGraph
-
-
+# langgraph stategraph
 graph_builder = StateGraph(DungeonEventState)
 graph_builder.add_node("heroine_memories_node", heroine_memories_node)
 graph_builder.add_node("selected_main_event_node", selected_main_event_node)
