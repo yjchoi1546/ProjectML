@@ -6,7 +6,6 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 from fastapi import Request
 
 import logging, time
@@ -14,7 +13,7 @@ from api.npc_router import router as npc_router
 from api.fairy_router import router as fairy_router
 from api.dungeon_router import router as dungeon_router
 from api.common_router import router as common_router
-from db.RDBRepository import RDBRepository
+
 
 # FastAPI 앱 생성
 app = FastAPI(
