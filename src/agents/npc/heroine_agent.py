@@ -983,16 +983,13 @@ class HeroineAgent(BaseNPCAgent):
         }
 
     def _build_full_prompt(
-        self, state: HeroineState, context: Dict[str, Any], for_streaming: bool = False
+        self, state: HeroineState, context: Dict[str, Any]
     ) -> str:
-        """전체 프롬프트 생성 (스트리밍/비스트리밍 공통)
-
-        동일한 컨텍스트로 동일한 프롬프트를 생성합니다.
+        """전체 프롬프트 생성
 
         Args:
             state: 현재 상태
             context: 컨텍스트 (검색 결과 등)
-            for_streaming: 스트리밍용이면 JSON 형식 요청 안함
 
         Returns:
             프롬프트 문자열
@@ -1013,11 +1010,8 @@ class HeroineAgent(BaseNPCAgent):
         else:
             affection_hint = "특별한 호감도 변화 없음"
 
-        # 출력 형식 (스트리밍은 텍스트만, 비스트리밍은 JSON)
-        if for_streaming:
-            output_format = "캐릭터로서 자연스럽게 대답하세요. 대화만 출력하세요."
-        else:
-            output_format = """[출력 형식]
+        # 출력 형식
+        output_format = """[출력 형식]
 반드시 아래 JSON 형식으로 출력하세요:
 {
     "thought": "(내면의 생각 - 플레이어에게 보이지 않음)",
@@ -1027,6 +1021,12 @@ class HeroineAgent(BaseNPCAgent):
 }"""
 
         time_since_last_chat = self.get_time_since_last_chat(state["player_id"], npc_id)
+
+        # 플레이어 이름 가져오기
+        player_known_name = None
+        session = redis_manager.load_session(state["player_id"], npc_id)
+        if session and "state" in session:
+            player_known_name = session["state"].get("player_known_name")
 
         # 세계관 컨텍스트 가져오기
         world_context = PERSONA_DATA.get("world_context", {})
@@ -1067,7 +1067,7 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
 - 캐릭터 말투와 성격을 일관되게 유지합니다.
 - text는 반드시 30자 이내로 답합니다.
 - **순수하게 페르소나에 입각해서 캐릭터의 대사만 출력하세요**
-- `멘토`는 현재 당신에게 말을 거는 플레이어입니다.
+- [플레이어 정보]를 참고하여 플레이어를 호칭하세요. 이름을 알면 이름으로, 모르면 "멘토"로 부르세요.
 
 [페르소나 규칙]
 - [세계관 컨텍스트]는 당신이 현재 알고 있는 정보입니다. 이 정보를 통해 당신은 이곳에 왜 있는지 플레이어가 누군지 알 수 있습니다.
@@ -1085,6 +1085,10 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
 - 문맥과 대화 흐름으로 의도를 추론하세요.
 - 불분명하면 캐릭터 말투로 자연스럽게 되물으세요.
 - 기술 용어(음성인식, STT, 오류 등)는 절대 사용 금지.
+
+[플레이어 정보]
+- 이름: {player_known_name if player_known_name else '알 수 없음'}
+- 호칭: {player_known_name if player_known_name else '멘토'} (이름을 알면 이름으로, 모르면 "멘토"로 호칭)
 
 [세계관 컨텍스트 - 당신이 알고 있는 기본 정보]
 - 길드: {world_context.get('guild', '셀레파이스 길드')}
@@ -1197,12 +1201,17 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
 
         # Redis 세션 업데이트
         session = redis_manager.load_session(player_id, npc_id)
+        player_known_name = None
         if session:
             # 상태 업데이트
             session["state"]["affection"] = new_affection
             session["state"]["sanity"] = new_sanity
             session["state"]["memoryProgress"] = new_memory_progress
             session["state"]["emotion"] = emotion_int
+
+            # 기존 player_known_name 유지 (백그라운드에서 업데이트될 수 있음)
+            if "player_known_name" in session.get("state", {}):
+                player_known_name = session["state"]["player_known_name"]
 
             # 대화 버퍼에 추가
             session["conversation_buffer"].append(
@@ -1291,6 +1300,7 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
             "memoryProgress": new_memory_progress,
             "emotion": emotion_int,
             "response_text": response_text,
+            "player_known_name": player_known_name,
         }
 
     async def _save_to_user_memory_background(
@@ -1299,6 +1309,7 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
         """백그라운드로 User Memory에 대화 저장
 
         LLM으로 fact 추출 후 저장
+        이름이 추출되면 Redis 세션에 저장
 
         Args:
             player_id: 플레이어 ID
@@ -1311,12 +1322,23 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
 
             heroine_id = NPC_ID_TO_HEROINE.get(npc_id, "letia")
 
-            await user_memory_manager.save_conversation(
+            result = await user_memory_manager.save_conversation(
                 player_id=str(player_id),
                 heroine_id=heroine_id,
                 user_message=user_msg,
                 npc_response=npc_response,
             )
+
+            # 이름이 추출되었으면 Redis 세션에 저장
+            extracted_name = result.get("extracted_player_name")
+            if extracted_name:
+                session = redis_manager.load_session(player_id, npc_id)
+                if session:
+                    if "state" not in session:
+                        session["state"] = {}
+                    session["state"]["player_known_name"] = extracted_name
+                    redis_manager.save_session(player_id, npc_id, session)
+                    print(f"[DEBUG] 플레이어 이름 저장: {extracted_name}")
         except Exception as e:
             print(f"[ERROR] User Memory 저장 실패: {e}")
 
@@ -1584,7 +1606,7 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
 
         # 프롬프트 생성 및 LLM 호출
         t1 = time.time()
-        prompt = self._build_full_prompt(state, context, for_streaming=False)
+        prompt = self._build_full_prompt(state, context)
         print(f"[TIMING] 프롬프트 빌드: {time.time() - t1:.3f}s")
 
         print(f"[PROMPT]\n{prompt}\n{'='*50}")
@@ -1672,53 +1694,6 @@ B) 자신의 과거/신상 질문: "고향이 어디야?", "어린시절 어땠�
         result = await self.graph.ainvoke(state)
         print(f"[TIMING] graph.ainvoke 내부: {time.time() - t:.3f}s")
         return result
-
-    async def generate_response_stream(self, state: HeroineState) -> AsyncIterator[str]:
-        """스트리밍 응답 생성 (컨텍스트 포함)
-
-        비스트리밍과 동일한 컨텍스트를 사용합니다.
-        LLM은 1번만 호출됩니다.
-
-        Args:
-            state: 입력 상태
-
-        Yields:
-            응답 토큰
-        """
-        import time
-
-        total_start = time.time()
-
-        # 1. 컨텍스트 준비 (기억/시나리오 검색)
-        context = await self._prepare_context(state)
-
-        # 2. 전체 프롬프트 생성 (비스트리밍과 동일한 컨텍스트)
-        t1 = time.time()
-        prompt = self._build_full_prompt(state, context, for_streaming=True)
-        print(f"[TIMING] 프롬프트 빌드: {time.time() - t1:.3f}s")
-
-        # 3. 스트리밍으로 응답 생성 (LLM 1번만 호출)
-        t2 = time.time()
-        first_token = True
-        full_response = ""
-        async for chunk in self.streaming_llm.astream(prompt):
-            if chunk.content:
-                if first_token:
-                    print(f"[TIMING] LLM 첫 토큰: {time.time() - t2:.3f}s")
-                    first_token = False
-                full_response += chunk.content
-                yield chunk.content
-        print(f"[TIMING] LLM 전체 응답: {time.time() - t2:.3f}s")
-
-        # 4. 상태 업데이트 (LLM 재호출 없이)
-        # 스트리밍에서는 emotion 추출 불가, 기본값 사용
-        t3 = time.time()
-        await self._update_state_after_response(
-            state, context, full_response, 0  # neutral
-        )
-        print(f"[TIMING] 상태 업데이트: {time.time() - t3:.3f}s")
-        print(f"[TIMING] === 총 소요시간: {time.time() - total_start:.3f}s ===")
-
 
 # 싱글톤 인스턴스 (앱 전체에서 하나만 사용)
 heroine_agent = HeroineAgent()

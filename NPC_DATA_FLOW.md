@@ -23,8 +23,9 @@
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 1. 각 히로인별 세션 데이터 생성                                           │
 │    - player_id, npc_id, npc_type                                        │
-│    - conversation_buffer: [] (빈 배열)                                   │
-│    - state: {affection, sanity, memoryProgress, emotion}                │
+│    - conversation_buffer: Supabase checkpoint에서 복원                   │
+│    - state: {affection, sanity, memoryProgress, emotion, player_known_name}│
+│    - player_known_name: checkpoint에서 복원 (서버 재시작 후에도 유지)    │
 │                                                                          │
 │ 2. Redis에 세션 저장 (TTL: 24시간)                                       │
 │    - Key: "session:{playerId}:{heroineId}"                              │
@@ -32,6 +33,7 @@
 │                                                                          │
 │ 3. 대현자 세션도 함께 생성                                                │
 │    - Key: "session:{playerId}:0"                                        │
+│    - player_known_name도 checkpoint에서 복원                            │
 └───────────────────────────────────┬─────────────────────────────────────┘
                                     │
                                     ▼
@@ -74,7 +76,10 @@
 │   "player_id": 10001,                                                    │
 │   "npc_id": 1,                                                           │
 │   "conversation_buffer": [...이전 대화...],                               │
-│   "state": {"affection": 50, "sanity": 100, "memoryProgress": 30, ...}  │
+│   "state": {                                                             │
+│     "affection": 50, "sanity": 100, "memoryProgress": 30,               │
+│     "player_known_name": "민수"   <- NPC가 기억하는 플레이어 이름        │
+│   }                                                                      │
 │ }                                                                        │
 └───────────────────────────────────┬─────────────────────────────────────┘
                                     │
@@ -143,6 +148,9 @@
 │ │ [현재 호감도 레벨: mid]                                             │ │
 │ │ 반응 스타일: 경계심 완화, 간간이 관심 표현, 여전히 무뚝뚝            │ │
 │ │                                                                     │ │
+│ │ [세계관 컨텍스트]                                                   │ │
+│ │ - 멘토: 플레이어 이름: 민수  <- player_known_name이 있으면 표시     │ │
+│ │                                                                     │ │
 │ │ [장기 기억] 플레이어가 어제 음식을 좋아한다고 말함                   │ │
 │ │ [해금된 시나리오] 레티아 기본 기억 정보...                           │ │
 │ │ [최근 대화] ...                                                     │ │
@@ -180,6 +188,9 @@
 │    - 임베딩 입력: "content (Keywords: ...)"로 결합해 생성               │
 │    - keywords 배열을 함께 저장, 중복/충돌 검사 후 저장                   │
 │    - 중복/충돌 검사: 0.9 이상 무조건 중복, 0.55 이상 시 LLM 판단         │
+│    - 플레이어 이름 추출: LLM이 player_name 필드로 직접 추출              │
+│      (예: "나는 민수야" → player_name: "민수")                          │
+│    - 이름 감지시 Redis 세션 + Supabase checkpoint에 저장                │
 └───────────────────────────────────┬─────────────────────────────────────┘
                                     │
                                     ▼
@@ -513,7 +524,7 @@
 | **npc_npc_checkpoints** | NPC-NPC 체크포인트 | 대화 전체 기록 (인터럽트용) |
 | **npc_npc_memories** | NPC-NPC 장기기억 | 중요 fact만 저장 (4요소 하이브리드 검색) |
 | **heroine_scenarios** | 시나리오 DB | 히로인 시나리오 (하이브리드 검색) |
-| **session_checkpoint** | 세션 체크포인트 | 대화 원문, 상태, 요약 목록 |
+| **session_checkpoint** | 세션 체크포인트 | 대화 원문, 상태 (player_known_name 포함), 요약 목록 |
 
 ### 저장소별 구조
 
@@ -522,7 +533,7 @@
 | **user_memories** | speaker, subject, content_type, keywords, embedding | User-NPC 대화 (4요소 하이브리드, content+keywords 임베딩) |
 | **npc_npc_checkpoints** | player_id, heroine_id_1, heroine_id_2, conversation | NPC-NPC 대화 전체 기록 |
 | **npc_npc_memories** | speaker_id, subject_id, content_type | NPC-NPC 장기기억 (4요소 하이브리드) |
-| **session_checkpoint** | state, summary_list, conversation | 세션 체크포인트, 요약 |
+| **session_checkpoint** | state (player_known_name 포함), summary_list, conversation | 세션 체크포인트, 요약, 플레이어 이름 |
 
 ### 검색 범위 (히로인 대화시)
 
@@ -685,6 +696,20 @@ Score = (w_recency × Recency) + (w_importance × Importance) + (w_relevance × 
 │ | 플레이어: "나는 고양이 좋아해"    | user    | user    | 고양이를 좋아함│
 │ | 레티아: "저도 고양이 좋아해요"    | letia   | letia   | 고양이를 좋아함│
 │ | 레티아: "오빠는 따뜻한 사람이에요"| letia   | user    | 따뜻한 사람임  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        플레이어 이름 추출 예시                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│ | 대화                    | content_type | content           | player_name │
+│ |-------------------------|--------------|-------------------|-------------|│
+│ | "나는 민수야"           | personal     | 멘토의 이름은 민수 | 민수        │
+│ | "민수라고 불러"         | personal     | 멘토의 이름은 민수 | 민수        │
+│ | "My name is Kim"        | personal     | 멘토의 이름은 Kim  | Kim         │
+│                                                                          │
+│ * LLM이 fact 추출 시 player_name 필드로 직접 이름 추출                  │
+│ * 이름 감지시 Redis 세션 + Supabase checkpoint에 저장                   │
+│ * 이후 프롬프트에서 "멘토" 대신 플레이어 이름 사용                      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 

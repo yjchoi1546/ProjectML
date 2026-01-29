@@ -114,6 +114,10 @@ Your goal is to extract key facts from the conversation to be stored in the long
      - Concrete: "Grape" -> Add "Fruit", "Food"
      - Abstract: "Warm-hearted" -> Add "Personality", "Evaluation"
    - **Optimization**: Exclude common stopwords (is, the) and vague words (thing, stuff). Focus on nouns and core adjectives.
+4. **Player Name Extraction (IMPORTANT)**:
+   - If the player reveals their name, extract it into the `player_name` field.
+   - Examples: "I'm Minsu", "Call me Minsu", "My name is Kim Minsu", "나 민수야", "민수라고 불러"
+   - Extract ONLY the name itself, not the full sentence.
 
 [Extraction Criteria & Content Types]
 - "preference": Likes/Dislikes (e.g., Food, Color, Hobbies).
@@ -142,7 +146,8 @@ Output:
     "content_type": "preference",
     "content": "멘토는 요즘 포도를 매우 좋아한다.",
     "importance": 6,
-    "keywords": ["나", "멘토", "포도", "좋아함", "선호", "과일", "음식", "식성"]
+    "keywords": ["나", "멘토", "포도", "좋아함", "선호", "과일", "음식", "식성"],
+    "player_name": null
   }}
 ]
 
@@ -156,7 +161,23 @@ Output:
     "content_type": "opinion",
     "content": "히로인은 멘토가 따뜻한 마음을 가졌다고 생각한다.",
     "importance": 7,
-    "keywords": ["히로인", "멘토", "따뜻함", "다정함", "성격", "평가", "인성"]
+    "keywords": ["히로인", "멘토", "따뜻함", "다정함", "성격", "평가", "인성"],
+    "player_name": null
+  }}
+]
+
+Example 3 (Player Name):
+Input: "My name is Minsu" or "나 민수야" or "민수라고 불러"
+Output:
+[
+  {{
+    "speaker": "user",
+    "subject": "user",
+    "content_type": "personal",
+    "content": "멘토의 이름은 민수이다.",
+    "importance": 8,
+    "keywords": ["이름", "멘토", "민수", "개인정보"],
+    "player_name": "민수"
   }}
 ]
 """
@@ -179,6 +200,7 @@ Output:
             facts = []
             for item in facts_data:
                 keywords = item.get("keywords", []) or []
+                player_name = item.get("player_name")
                 fact = ExtractedFact(
                     speaker=Speaker(item["speaker"]),
                     subject=Subject(item["subject"]),
@@ -186,6 +208,7 @@ Output:
                     content=item["content"],
                     importance=item.get("importance", 5),
                     keywords=keywords,
+                    player_name=player_name,
                 )
                 facts.append(fact)
 
@@ -294,6 +317,19 @@ Output:
 
         return {"memory_id": memory_id, "invalidated": invalidated}
 
+    def _extract_player_name(self, fact: ExtractedFact) -> Optional[str]:
+        """ExtractedFact에서 플레이어 이름 추출
+
+        LLM이 fact 추출 시 player_name 필드에 직접 이름을 추출합니다.
+
+        Args:
+            fact: ExtractedFact 객체
+
+        Returns:
+            추출된 이름 또는 None
+        """
+        return fact.player_name
+
     async def save_conversation(
         self, player_id: str, heroine_id: str, user_message: str, npc_response: str
     ) -> dict:
@@ -310,7 +346,8 @@ Output:
         Returns:
             dict: {
                 "memory_ids": 저장된 메모리 ID 리스트,
-                "preference_changes": 취향 변화 리스트 [{"old": ..., "new": ...}]
+                "preference_changes": 취향 변화 리스트 [{"old": ..., "new": ...}],
+                "extracted_player_name": 추출된 플레이어 이름 또는 None
             }
         """
         # 대화 포맷
@@ -321,11 +358,12 @@ Output:
         facts = facts[:2]
 
         if not facts:
-            return {"memory_ids": [], "preference_changes": []}
+            return {"memory_ids": [], "preference_changes": [], "extracted_player_name": None}
 
         # 각 fact 저장
         memory_ids = []
         preference_changes = []
+        extracted_player_name = None
 
         for fact in facts:
             result = await self.add_memory(player_id, heroine_id, fact)
@@ -336,7 +374,17 @@ Output:
             for inv in result["invalidated"]:
                 preference_changes.append({"old": inv["content"], "new": fact.content})
 
-        return {"memory_ids": memory_ids, "preference_changes": preference_changes}
+            # 이름 추출 시도
+            if extracted_player_name is None:
+                name = self._extract_player_name(fact)
+                if name:
+                    extracted_player_name = name
+
+        return {
+            "memory_ids": memory_ids,
+            "preference_changes": preference_changes,
+            "extracted_player_name": extracted_player_name,
+        }
 
     # ============================================
     # 기억 검색
