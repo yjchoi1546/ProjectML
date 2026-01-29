@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(tasklist:*)",
+      "Bash(powershell -Command \"Get-Process -Id 20744 | Select-Object ProcessName, Id, Path\")",
+      "Bash(taskkill:*)"
+    ]
+  }
+}

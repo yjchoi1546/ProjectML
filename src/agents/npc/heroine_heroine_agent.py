@@ -126,9 +126,6 @@ class HeroineHeroineAgent:
         """
         # 대화 생성용 LLM (temperature=0.8로 다양한 대화)
         self.llm = init_chat_model(model=model_name, temperature=1.0)
-        self.streaming_llm = init_chat_model(
-            model=model_name, temperature=1.0, streaming=True
-        )
 
     # ============================================
     # 페르소나 및 관계 헬퍼 메서드
@@ -234,7 +231,6 @@ class HeroineHeroineAgent:
         heroine2_id: int,
         situation: str,
         turn_count: int,
-        for_streaming: bool = False,
         memory_progress_1: int = 0,
         memory_progress_2: int = 0,
         sanity_1: int = 100,
@@ -243,16 +239,13 @@ class HeroineHeroineAgent:
         unlocked_1_text: str = "없음",
         unlocked_2_text: str = "없음",
     ) -> str:
-        """대화 생성 프롬프트 (스트리밍/비스트리밍 공통)
-
-        동일한 프롬프트로 동일한 품질의 대화를 생성합니다.
+        """대화 생성 프롬프트
 
         Args:
             heroine1_id: 첫 번째 히로인 ID
             heroine2_id: 두 번째 히로인 ID
             situation: 대화 상황
             turn_count: 대화 턴 수
-            for_streaming: 스트리밍용이면 텍스트 형식, 아니면 JSON 형식
 
         Returns:
             프롬프트 문자열
@@ -335,15 +328,8 @@ class HeroineHeroineAgent:
         # 토큰 최소화: 최근 6줄만
         recent_text = "\n".join(turn_lines[-6:]) if turn_lines else "없음"
 
-        # 출력 형식 (스트리밍은 텍스트, 비스트리밍은 JSON)
-        if for_streaming:
-            output_format = f"""[출력 형식]
-각 대화를 다음 형식으로 출력하세요:
-[{name1}] (감정) 대사
-[{name2}] (감정) 대사
-..."""
-        else:
-            output_format = f"""[출력 형식]
+        # 출력 형식
+        output_format = f"""[출력 형식]
 JSON 배열로 출력하세요:
 [
     {{"speaker_id": {heroine1_id}, "speaker_name": "{name1}", "text": "대사", "emotion": "neutral|joy|fun|sorrow|angry|surprise|mysterious", "emotion_intensity": 0.5~2.0}},
@@ -399,68 +385,6 @@ JSON 배열로 출력하세요:
 {output_format}"""
 
         return prompt
-
-    def _parse_streaming_response(
-        self, response_text: str, heroine1_id: int, heroine2_id: int
-    ) -> List[Dict[str, Any]]:
-        """스트리밍 응답을 JSON 형식으로 파싱
-
-        [레티아] (neutral) 대사 형식을 JSON으로 변환합니다.
-
-        Args:
-            response_text: 스트리밍 전체 응답
-            heroine1_id: 첫 번째 히로인 ID
-            heroine2_id: 두 번째 히로인 ID
-
-        Returns:
-            대화 리스트 (각 항목: speaker_id, speaker_name, text, emotion)
-        """
-        persona1 = self._get_persona(heroine1_id)
-        persona2 = self._get_persona(heroine2_id)
-        name1 = persona1.get("name", "히로인1")
-        name2 = persona2.get("name", "히로인2")
-
-        conversation = []
-        lines = response_text.strip().split("\n")
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            # [이름] (감정) 대사 형식 파싱
-            if line.startswith(f"[{name1}]"):
-                speaker_id = heroine1_id
-                speaker_name = name1
-                rest = line[len(f"[{name1}]") :].strip()
-            elif line.startswith(f"[{name2}]"):
-                speaker_id = heroine2_id
-                speaker_name = name2
-                rest = line[len(f"[{name2}]") :].strip()
-            else:
-                continue
-
-            # (감정) 대사 파싱
-            emotion = "neutral"
-            text = rest
-
-            if rest.startswith("("):
-                end_paren = rest.find(")")
-                if end_paren > 0:
-                    emotion = rest[1:end_paren].strip()
-                    text = rest[end_paren + 1 :].strip()
-
-            conversation.append(
-                {
-                    "speaker_id": speaker_id,
-                    "speaker_name": speaker_name,
-                    "text": text,
-                    "emotion": heroine_emotion_to_int(emotion),
-                    "emotion_intensity": 1.0,
-                }
-            )
-
-        return conversation
 
     def _save_conversation_to_db(
         self,
@@ -773,145 +697,6 @@ JSON 배열로 출력하세요:
             "importance_score": importance_score,
             "timestamp": datetime.now().isoformat(),
         }
-
-    async def generate_conversation_stream(
-        self,
-        player_id: str,
-        heroine1_id: int,
-        heroine2_id: int,
-        situation: str = None,
-        turn_count: int = 5,
-        importance_score: int = 5,
-    ) -> AsyncIterator[str]:
-        """대화 스트리밍 생성 + DB 저장
-
-        비스트리밍과 동일하게 DB에 저장합니다.
-
-        Args:
-            heroine1_id: 첫 번째 히로인 ID
-            heroine2_id: 두 번째 히로인 ID
-            situation: 대화 상황 (None이면 자동 생성)
-            turn_count: 대화 턴 수
-            importance_score: 중요도 (1-10)
-
-        Yields:
-            대화 토큰
-        """
-        import time
-
-        total_start = time.time()
-
-        if not self._is_valid_situation(situation):
-            t = time.time()
-            situation = await self.generate_situation()
-            print(f"[TIMING] NPC-NPC(스트림) 상황 생성: {time.time() - t:.3f}s")
-
-        memory_progress_1 = 0
-        memory_progress_2 = 0
-        sanity_1 = 100
-        sanity_2 = 100
-        recent_turns: List[Dict[str, Any]] = []
-        unlocked_1_text = "없음"
-        unlocked_2_text = "없음"
-
-        t = time.time()
-        session1 = redis_manager.load_session(str(player_id), heroine1_id) or {}
-        session2 = redis_manager.load_session(str(player_id), heroine2_id) or {}
-        state1 = session1.get("state", {}) if isinstance(session1, dict) else {}
-        state2 = session2.get("state", {}) if isinstance(session2, dict) else {}
-        print(f"[TIMING] NPC-NPC(스트림) Redis 세션 로드: {time.time() - t:.3f}s")
-
-        # sanity 값 가져오기 (NPC-NPC 대화에도 sanity 반영)
-        sanity_1 = int(state1.get("sanity", 100))
-        sanity_2 = int(state2.get("sanity", 100))
-
-        t = time.time()
-        if heroine1_id == 0:
-            scenario_level = int(state1.get("scenarioLevel", 1) or 1)
-            memory_progress_1 = scenario_level * 10
-            latest = sage_scenario_service.get_latest_unlocked_scenario(scenario_level)
-            if latest and latest.get("content"):
-                unlocked_1_text = str(latest.get("content"))
-        else:
-            memory_progress_1 = int(state1.get("memoryProgress", 0) or 0)
-            latest = heroine_scenario_service.get_latest_unlocked_scenario(
-                heroine_id=heroine1_id, max_memory_progress=memory_progress_1
-            )
-            if latest and latest.get("content"):
-                unlocked_1_text = str(latest.get("content"))
-
-        if heroine2_id == 0:
-            scenario_level = int(state2.get("scenarioLevel", 1) or 1)
-            memory_progress_2 = scenario_level * 10
-            latest = sage_scenario_service.get_latest_unlocked_scenario(scenario_level)
-            if latest and latest.get("content"):
-                unlocked_2_text = str(latest.get("content"))
-        else:
-            memory_progress_2 = int(state2.get("memoryProgress", 0) or 0)
-            latest = heroine_scenario_service.get_latest_unlocked_scenario(
-                heroine_id=heroine2_id, max_memory_progress=memory_progress_2
-            )
-            if latest and latest.get("content"):
-                unlocked_2_text = str(latest.get("content"))
-        print(f"[TIMING] NPC-NPC(스트림) 최신 해금 1개 조회: {time.time() - t:.3f}s")
-
-        t = time.time()
-        npc_npc_session = redis_manager.load_npc_npc_session(
-            str(player_id), heroine1_id, heroine2_id
-        )
-        if npc_npc_session:
-            recent_turns = npc_npc_session.get("conversation_buffer", [])[-10:]
-        print(f"[TIMING] NPC-NPC(스트림) Redis pair 세션 로드: {time.time() - t:.3f}s")
-
-        t = time.time()
-        prompt = self._build_conversation_prompt(
-            heroine1_id,
-            heroine2_id,
-            situation,
-            turn_count,
-            for_streaming=True,
-            memory_progress_1=memory_progress_1,
-            memory_progress_2=memory_progress_2,
-            sanity_1=sanity_1,
-            sanity_2=sanity_2,
-            recent_turns=recent_turns,
-            unlocked_1_text=unlocked_1_text,
-            unlocked_2_text=unlocked_2_text,
-        )
-        print(f"[TIMING] NPC-NPC(스트림) 프롬프트 빌드: {time.time() - t:.3f}s")
-        print(f"[PROMPT][NPC-NPC][STREAM]\n{prompt}\n{'='*50}")
-
-        # 스트리밍으로 응답 생성
-        t = time.time()
-        full_response = ""
-        async for chunk in self.streaming_llm.astream(prompt):
-            if chunk.content:
-                full_response += chunk.content
-                yield chunk.content
-        print(f"[TIMING] NPC-NPC(스트림) LLM 스트리밍: {time.time() - t:.3f}s")
-
-        # 응답을 JSON으로 파싱
-        t = time.time()
-        conversation = self._parse_streaming_response(
-            full_response, heroine1_id, heroine2_id
-        )
-        print(f"[TIMING] NPC-NPC(스트림) 파싱: {time.time() - t:.3f}s")
-
-        # DB에 저장 (비스트리밍과 동일하게)
-        if conversation:
-            t = time.time()
-            self._save_conversation_to_db(
-                str(player_id),
-                heroine1_id,
-                heroine2_id,
-                conversation,
-                situation,
-                importance_score,
-            )
-            print(f"[TIMING] NPC-NPC(스트림) 저장: {time.time() - t:.3f}s")
-        print(
-            f"[TIMING] NPC-NPC generate_conversation_stream 총합: {time.time() - total_start:.3f}s"
-        )
 
     # ============================================
     # 조회 메서드

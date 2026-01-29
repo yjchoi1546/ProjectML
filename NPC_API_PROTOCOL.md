@@ -27,6 +27,8 @@
 
 게임 접속시 **1번만** 호출합니다. 플레이어의 모든 NPC 세션을 초기화합니다.
 
+> **플레이어 이름 기억 기능**: 플레이어가 대화 중 자신의 이름을 밝히면 (예: "나는 민수야", "민수라고 불러"), NPC가 이름을 기억하고 이후 대화에서 사용합니다. 이름은 서버 재시작 후에도 유지됩니다.
+
 #### Request
 
 ```json
@@ -911,7 +913,8 @@ NPC별 세션 정보를 조회합니다. (디버그용)
         "affection": 50,
         "sanity": 100,
         "memoryProgress": 30,
-        "emotion": 0
+        "emotion": 0,
+        "player_known_name": "민수"
     },
     "last_chat_at": "2025-01-15T10:30:00.000Z"
 }
@@ -937,6 +940,7 @@ NPC별 세션 정보를 조회합니다. (디버그용)
 | state.sanity | int | 정신력 (0-100) |
 | state.memoryProgress | int | 기억 진척도 (0-100) |
 | state.emotion | int | 현재 감정 (0-6) |
+| state.player_known_name | string/null | NPC가 기억하는 플레이어 이름 (없으면 null) |
 | last_chat_at | string/null | 마지막 대화 시각 (ISO 8601) |
 
 #### Response (대현자 세션)
@@ -956,7 +960,8 @@ NPC별 세션 정보를 조회합니다. (디버그용)
     "last_summary_at": null,
     "state": {
         "scenarioLevel": 3,
-        "emotion": 0
+        "emotion": 0,
+        "player_known_name": "민수"
     },
     "last_chat_at": "2025-01-15T10:30:00.000Z"
 }
@@ -977,6 +982,7 @@ NPC별 세션 정보를 조회합니다. (디버그용)
 | state | object | 대현자 상태 |
 | state.scenarioLevel | int | 시나리오 레벨 (1-10) |
 | state.emotion | int | 현재 감정 (0-6) |
+| state.player_known_name | string/null | NPC가 기억하는 플레이어 이름 (없으면 null) |
 | last_chat_at | string/null | 마지막 대화 시각 (ISO 8601) |
 
 ---

@@ -72,6 +72,7 @@ class ExtractedFact(BaseModel):
     content: str  # 추출된 사실 내용
     importance: int = Field(default=5, ge=1, le=10)  # 중요도 1~10
     keywords: List[str] = Field(default_factory=list)  # 검색용 키워드/상위 개념
+    player_name: Optional[str] = None  # 플레이어가 이름을 밝힌 경우 추출
 
 
 class FactExtractionResult(BaseModel):
