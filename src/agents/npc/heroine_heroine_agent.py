@@ -21,52 +21,26 @@
 import asyncio
 import json
 import yaml
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import List, AsyncIterator, Optional, Dict, Any, Tuple
 from langchain.chat_models import init_chat_model
 from enums.LLM import LLM
 from agents.npc.emotion_mapper import heroine_emotion_to_int
+from agents.npc.npc_utils import parse_llm_json_response, load_persona_yaml
 from db.redis_manager import redis_manager
 from db.npc_npc_memory_manager import npc_npc_memory_manager
 from services.sage_scenario_service import sage_scenario_service
 from services.heroine_scenario_service import heroine_scenario_service
+from utils.langfuse_tracker import tracker
 
 
 # ============================================
 # 페르소나 데이터 로드
 # ============================================
 
-# 페르소나 YAML 파일 경로
-PERSONA_PATH = (
-    Path(__file__).parent.parent.parent
-    / "prompts"
-    / "prompt_type"
-    / "npc"
-    / "heroine_persona.yaml"
-)
-
-
-def load_persona_data() -> Dict[str, Any]:
-    """페르소나 YAML 파일 로드
-
-    파일이 없거나 오류가 있으면 기본값 반환
-
-    Returns:
-        페르소나 데이터 딕셔너리
-    """
-    try:
-        with open(PERSONA_PATH, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        print(f"경고: 페르소나 파일을 찾을 수 없습니다: {PERSONA_PATH}")
-        return _get_default_persona()
-    except Exception as e:
-        print(f"경고: 페르소나 로드 실패: {e}")
-        return _get_default_persona()
-
-
-def _get_default_persona() -> Dict[str, Any]:
+def _get_default_heroine_heroine_persona() -> Dict[str, Any]:
     """기본 페르소나 데이터 (파일 없을 때 사용)"""
     return {
         "letia": {
@@ -93,7 +67,7 @@ def _get_default_persona() -> Dict[str, Any]:
 
 
 # 페르소나 데이터 로드 (모듈 로드시 1회)
-PERSONA_DATA = load_persona_data()
+PERSONA_DATA = load_persona_yaml("heroine_persona.yaml", _get_default_heroine_heroine_persona)
 
 # NPC ID -> 페르소나 키 매핑
 # - 0: 대현자(사트라)
@@ -118,7 +92,7 @@ class HeroineHeroineAgent:
             print(chunk, end="")
     """
 
-    def __init__(self, model_name: str = LLM.GROK_4_FAST_NON_REASONING):
+    def __init__(self, model_name: str = LLM.GROK_4_1_FAST_NON_REASONING):
         """초기화
 
         Args:
@@ -218,7 +192,13 @@ class HeroineHeroineAgent:
 출력 형식:
 선택한 상황과 함께 2-3문장으로 구체적인 상황을 설명하세요."""
 
-        response = await self.llm.ainvoke(prompt)
+        # LangFuse 토큰 추적 (v3 API)
+        config = tracker.get_langfuse_config(
+            tags=["npc", "heroine_heroine", "situation"],
+            metadata={"action": "situation_generation"}
+        )
+        
+        response = await self.llm.ainvoke(prompt, **config)
         return response.content
 
     # ============================================
@@ -508,8 +488,6 @@ JSON 배열로 출력하세요:
         Returns:
             대화 리스트 (각 항목: speaker_id, speaker_name, text, emotion)
         """
-        import time
-
         total_start = time.time()
 
         if not self._is_valid_situation(situation):
@@ -587,7 +565,6 @@ JSON 배열로 출력하세요:
             heroine2_id,
             situation,
             turn_count,
-            for_streaming=False,
             memory_progress_1=memory_progress_1,
             memory_progress_2=memory_progress_2,
             sanity_1=sanity_1,
@@ -600,22 +577,49 @@ JSON 배열로 출력하세요:
         print(f"[PROMPT][NPC-NPC]\n{prompt}\n{'='*50}")
 
         t = time.time()
-        response = await self.llm.ainvoke(prompt)
+        
+        # LangFuse 토큰 추적 (v3 API)
+        config = tracker.get_langfuse_config(
+            tags=["npc", "heroine_heroine", "conversation"],
+            metadata={
+                "heroine1_id": heroine1_id,
+                "heroine2_id": heroine2_id,
+                "turn_count": turn_count,
+            }
+        )
+        
+        response = await self.llm.ainvoke(prompt, **config)
+        
+        # 로컬 디버깅용 토큰 로깅
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            print(f"[TOKEN] heroine_heroine - "
+                  f"input: {response.usage_metadata.get('input_tokens', 'N/A')}, "
+                  f"output: {response.usage_metadata.get('output_tokens', 'N/A')}")
+        
         print(f"[TIMING] NPC-NPC LLM 호출: {time.time() - t:.3f}s")
 
         # JSON 파싱
         t = time.time()
-        try:
-            content = response.content
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-            conversation = json.loads(content.strip())
-
+        persona1 = self._get_persona(heroine1_id)
+        persona2 = self._get_persona(heroine2_id)
+        
+        # 기본값 (파싱 실패 시)
+        default_conversation = [
+            {
+                "speaker_id": heroine1_id,
+                "speaker_name": persona1.get("name", "히로인"),
+                "text": "...",
+                "emotion": 0,  # neutral
+            }
+        ]
+        
+        # JSON 파싱 (공통 함수 사용)
+        parsed = parse_llm_json_response(response.content, default=[])
+        
+        if isinstance(parsed, list) and parsed:
+            conversation = parsed
+            
             # speaker_name을 기준으로 올바른 speaker_id 할당
-            persona1 = self._get_persona(heroine1_id)
-            persona2 = self._get_persona(heroine2_id)
             name_to_id = {
                 persona1.get("name"): heroine1_id,
                 persona2.get("name"): heroine2_id,
@@ -632,16 +636,8 @@ JSON 배열로 출력하세요:
                     msg["emotion"] = heroine_emotion_to_int(msg["emotion"])
                 if "emotion_intensity" not in msg:
                     msg["emotion_intensity"] = 1.0
-        except (json.JSONDecodeError, IndexError):
-            persona1 = self._get_persona(heroine1_id)
-            conversation = [
-                {
-                    "speaker_id": heroine1_id,
-                    "speaker_name": persona1.get("name", "히로인"),
-                    "text": "...",
-                    "emotion": 0,  # neutral
-                }
-            ]
+        else:
+            conversation = default_conversation
         print(f"[TIMING] NPC-NPC JSON 파싱: {time.time() - t:.3f}s")
         print(
             f"[TIMING] NPC-NPC generate_conversation 총합: {time.time() - total_start:.3f}s"

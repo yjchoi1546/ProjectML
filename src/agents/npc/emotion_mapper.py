@@ -12,6 +12,17 @@ LLM은 여전히 문자열 emotion을 이해하고 출력하지만,
 - 4: angry (분노)
 - 5: surprise (놀람)
 - 6: mysterious (신비로움)
+
+emotion_intensity 범위 및 의미:
+- 0.5: 약한 감정 (미소, 가벼운 놀람)
+- 1.0: 보통 감정 (일반적인 기쁨, 슬픔)
+- 1.5: 강한 감정 (큰 웃음, 눈물)
+- 2.0: 극도로 강한 감정 (폭소, 오열, 격노)
+
+사용 예시:
+- emotion="joy", emotion_intensity=0.5 → 가벼운 미소
+- emotion="joy", emotion_intensity=1.5 → 환하게 웃음
+- emotion="angry", emotion_intensity=2.0 → 격노
 """
 
 from typing import Optional

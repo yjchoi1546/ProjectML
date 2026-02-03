@@ -7,7 +7,7 @@ NPC API 라우터
 import asyncio
 import random
 import base64
-import os
+import time
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -20,6 +20,8 @@ from db.session_checkpoint_manager import session_checkpoint_manager
 from agents.npc.heroine_agent import heroine_agent
 from agents.npc.sage_agent import sage_agent
 from agents.npc.heroine_heroine_agent import heroine_heroine_agent
+from agents.npc.base_npc_agent import MAX_CONVERSATION_BUFFER_SIZE
+from agents.npc.npc_constants import NPC_ID_TO_NAME_EN
 from tools.audio.tts_typecast import typecast_tts_service
 
 # ============================================
@@ -28,14 +30,6 @@ from tools.audio.tts_typecast import typecast_tts_service
 
 # 음성 저장 디렉토리 (프로젝트 루트/audio_logs)
 AUDIO_LOG_DIR = Path(__file__).parent.parent.parent / "audio_logs"
-
-# NPC 이름 매핑
-NPC_NAMES = {
-    0: "sage_satra",
-    1: "heroine_retia",
-    2: "heroine_lupames",
-    3: "heroine_roco",
-}
 
 
 def save_audio_file_background(
@@ -53,7 +47,7 @@ def save_audio_file_background(
     try:
         # 날짜별 디렉토리 생성
         today = datetime.now().strftime("%Y-%m-%d")
-        npc_name = NPC_NAMES.get(npc_id, f"npc_{npc_id}")
+        npc_name = NPC_ID_TO_NAME_EN.get(npc_id, f"npc_{npc_id}")
 
         save_dir = AUDIO_LOG_DIR / today / endpoint_type / npc_name
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -282,7 +276,7 @@ async def login(request: LoginRequest):
             "player_id": player_id,
             "npc_id": heroine.heroineId,
             "npc_type": "heroine",
-            "conversation_buffer": conversation_buffer[-20:],
+            "conversation_buffer": conversation_buffer[-MAX_CONVERSATION_BUFFER_SIZE:],
             "short_term_summary": "",
             "summary_list": checkpoint.get("summary_list", []),
             "turn_count": len(checkpoint.get("conversations", [])),
@@ -322,7 +316,7 @@ async def login(request: LoginRequest):
         "player_id": player_id,
         "npc_id": 0,
         "npc_type": "sage",
-        "conversation_buffer": sage_conversation_buffer[-20:],
+        "conversation_buffer": sage_conversation_buffer[-MAX_CONVERSATION_BUFFER_SIZE:],
         "short_term_summary": "",
         "summary_list": sage_checkpoint.get("summary_list", []),
         "turn_count": len(sage_checkpoint.get("conversations", [])),
@@ -348,8 +342,6 @@ async def login(request: LoginRequest):
 @router.post("/heroine/chat/sync", response_model=ChatResponse)
 async def heroine_chat_sync(request: ChatRequest, background_tasks: BackgroundTasks):
     """히로인과 대화 (비스트리밍)"""
-    import time
-
     api_start = time.time()
 
     player_id = request.playerId
@@ -439,8 +431,6 @@ async def heroine_chat_sync(request: ChatRequest, background_tasks: BackgroundTa
 @router.post("/sage/chat/sync", response_model=SageChatResponse)
 async def sage_chat_sync(request: SageChatRequest, background_tasks: BackgroundTasks):
     """대현자와 대화 (비스트리밍)"""
-    import time
-
     api_start = time.time()
 
     player_id = request.playerId
@@ -518,8 +508,6 @@ async def sage_chat_sync(request: SageChatRequest, background_tasks: BackgroundT
 @router.post("/heroine-conversation/generate")
 async def generate_heroine_conversation(request: HeroineConversationRequest):
     """히로인간 대화 생성 (비스트리밍)"""
-    import time
-
     api_start = time.time()
 
     t = time.time()
@@ -670,8 +658,6 @@ async def heroine_chat_sync_voice(
 
     기존 /heroine/chat/sync와 동일하지만 TTS 음성이 포함됩니다.
     """
-    import time
-
     api_start = time.time()
 
     player_id = request.playerId
@@ -784,8 +770,6 @@ async def sage_chat_sync_voice(
 
     기존 /sage/chat/sync와 동일하지만 TTS 음성이 포함됩니다.
     """
-    import time
-
     api_start = time.time()
 
     player_id = request.playerId
@@ -889,8 +873,6 @@ async def generate_heroine_conversation_voice(
 
     기존 /heroine-conversation/generate와 동일하지만 TTS 음성이 포함됩니다.
     """
-    import time
-
     api_start = time.time()
 
     result = await heroine_heroine_agent.generate_and_save_conversation(

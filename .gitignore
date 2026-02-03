@@ -16,3 +16,20 @@ uploads
 audio_logs
 uvicorn_*.out
 CLAUDE.md
+핵심기술 정리.md
+heroine_system.yaml
+sage_system.yaml
+.deepeval/
+DOCS_COMMANDS_EXAMPLE/
+refactor_report.md
+
+docs/README.md
+SESSION_CHECKPOINT_SUMMARY_SYSTEM.md
+NPC_SYSTEM_IMPLEMENTATION.md  
+NEW_LONGMEMORY_SYSTEM.MD
+EMOTION_MAPPING.md
+DB_USAGE_GUIDE.md
+STUDY_DB_SETUP.md
+SUPABASE_SETUP.md
+memory_implementation_guide.md
+docs/명령어_사용_가이드.md

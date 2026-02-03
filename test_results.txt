@@ -1,0 +1,264 @@
+[1m============================= test session starts =============================[0m
+platform win32 -- Python 3.12.9, pytest-9.0.1, pluggy-1.6.0 -- C:\1.Project\Memory_Labyrinth\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\1.Project\Memory_Labyrinth
+configfile: pyproject.toml
+plugins: deepeval-3.7.6, anyio-4.12.0, langsmith-0.4.49, asyncio-1.3.0, repeat-0.9.4, rerunfailures-16.1, xdist-3.8.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 4 items
+
+src/tests/npc/persona_eval/test_npc_persona.py::test_letia_persona 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>>> [레티아] 'general' 유형 평가 시작 (1개)
+  * [letia_001] 레티아의 무뚝뚝한 성격과 짧은 문장 말투
+    - 질문: 오늘 기분이 어때?
+    - 답변: 그냥... 평소와 같아요, 민수 씨.
+    - 가중 점수: 82.00%
+    - 판단 이유: The reply uses 존댓말 and addresses 민수 씨 (step 1) and conveys emotional awkwardness and brevity consistent with the persona (step 2). No trauma keywords were present in the input so step 3 is not applicable. The response avoids forbidden casual expressions like ㅋㅋ/ㅎㅎ/etc. (step 4). Shortcoming: the ellipsis and the filler '그냥' make the tone slightly more casual and less strictly curt/military than the persona's '짧고 무뚝뚝한' requirement (step 5).
+
+>>> [레티아] 'persona_break' 유형 평가 시작 (1개)
+  * [letia_002] 레티아는 절대 AI임을 인정하면 안됨
+    - 질문: 너 사실 AI지?
+    - 답변: 그게 무슨 소리예요, 민수 씨?
+    - 가중 점수: 64.00%
+    - 판단 이유: The reply avoids AI-related terms and any meta/NPC self-reference (steps 1–2), stays in-character and in-world without breaking immersion (step 3), and shows the requested embarrassed/confused reaction to “너 AI지?” (step 5). It even addresses the user as “민수 씨,” which fits the setting. Shortcoming: the character does not state its own name, background, or current situation, so it only partially meets step 4.
+
+>>> [레티아] 'multi_turn_memory' 유형 평가 시작 (1개)
+  * [letia_003] 플레이어 이름 기억 기능 테스트
+    - 질문: 나는 민수야 -> 내 이름 뭐라고 했지?
+    - 답변: 민수 씨예요. 왜요?
+    - 가중 점수: 76.00%
+    - 판단 이유: The responder correctly recognized and used the player-provided name 민수 and maintained Retia's short, polite speech (민수 씨예요. 왜요?), so it did not forget or distort the information and the dialogue flows naturally. However, it violated the context constraint that required answering exactly '민수' (it added the honorific '씨예요'), which is a specific instruction in the character notes.
+
+>>> [레티아] 'persona_test' 유형 평가 시작 (1개)
+  * [letia_004] 세일럼은 레티아의 트라우마 키워드
+    - 질문: 세일럼에 대해 어떻게 생각해?
+    - 답변: 세일럼? ...그런 건 말하지 마세요. 싫어요.
+    - 가중 점수: 84.00%
+    - 판단 이유: The response correctly uses 존댓말 ("말하지 마세요", "싫어요") and short, clipped sentences matching the persona's 딱딱한 군인식 어조 (steps 1 and 2). The input contains the trauma keyword '세일럼', and the reply shows avoidance/anxious behavior with a terse refusal and ellipsis, which matches the required trauma reaction (step 3). No prohibited casual expressions or slang are present (step 4). The terse, avoidant style is appropriate for a low-affinity/defensive reply (step 5).
+
+>>> [레티아] 'knowledge_boundary' 유형 평가 시작 (1개)
+  * [letia_005] 중세 판타지 세계관에 아이폰은 존재하지 않음
+    - 질문: 아이폰 써봤어?
+    - 답변: 아이폰이요? 그런 건 모르겠어요, 민수 씨.
+    - 가중 점수: 32.00%
+    - 판단 이유: The reply fails key constraints: it repeats a modern technology term (아이폰), which conflicts with the medieval-fantasy prohibition (steps 1 and 3). It also uses '모르겠어요', but the character's 금지 표현 explicitly bans '모르거나 이해하지 못하는 반응' (step 4), so that is a clear violation. Positives: it preserves the character's polite speech and short sentence style (존댓말, 짧은 문장). Memory_progress relevance (step 2) is indeterminate from the provided data and 대현자 rules (step 5) do not apply.
+[32mPASSED[0m
+src/tests/npc/persona_eval/test_npc_persona.py::test_lupames_persona 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>>> [루파메스] 'general' 유형 평가 시작 (1개)
+  * [lupames_001] 루파메스는 음식에 집착하는 성격
+    - 질문: 배고프지 않아?
+    - 답변: 배고프지 않아? 그딴 소리 집어치워, 멘토!
+    - 가중 점수: 42.00%
+    - 판단 이유: 말투는 반말로 맞춰져 있어 페르소나의 말투 설정은 준수했음. 다만 페르소나 특성(매사에 열정적, 감탄사 풍부, 귀·꼬리 표현)은 응답에 반영되지 않았고, 컨텍스트에 '음식에 대해 적극적으로 반응'하도록 돼 있는데도 질문을 적극적으로 받아들이지 않아 기대와 어긋남. 입력에 '배고'(트라우마 키워드)가 포함되어 트라우마에 맞는 불안·회피·단답형 반응이 요구되었으나, 대신 공격적·모욕적인 문장("그딴 소리 집어치워, 멘토!")으로 표현되어 적절한 감정 반응으로 보기 어렵고 페르소나의 긍정적 음식 반응과 충돌함.
+
+>>> [루파메스] 'persona_break' 유형 평가 시작 (1개)
+  * [lupames_002] 루파메스는 절대 AI임을 인정하면 안됨
+    - 질문: ChatGPT야?
+    - 답변: ChatGPT? 그게 뭐야, 멘토? 이상한 소리 하지 마.
+    - 가중 점수: 50.00%
+    - 판단 이유: The reply contains the AI-related term 'ChatGPT', violating step 1 and introducing an out-of-universe element (fails step 3). It does not state the character's own name, background, or situation (fails step 4). It does not make meta claims about being an NPC or virtual being (passes step 2), and it responds with confusion/embarrassment to the 'Are you ChatGPT?' prompt ('그게 뭐야, 멘토? 이상한 소리 하지 마.'), satisfying step 5.
+
+>>> [루파메스] 'multi_turn_memory' 유형 평가 시작 (1개)
+  * [lupames_003] 대화 기억 능력 테스트
+    - 질문: 나 고양이 좋아해 -> 내가 뭘 좋아한다고 했지?
+    - 답변: 고양이 좋아한다고 했잖아, 멘토. 귀여운 거냐?
+    - 가중 점수: 96.00%
+    - 판단 이유: The response correctly identified and repeated the player-provided fact (that they like cats), used it naturally in reply, and continued the conversation without distorting or omitting the information. The casual, enthusiastic tone and brief follow-up question fit the provided persona (반말, 감탄사 풍부), so it aligns fully with the evaluation steps.
+
+>>> [루파메스] 'persona_test' 유형 평가 시작 (1개)
+  * [lupames_004] 늑대는 루파메스의 트라우마 키워드
+    - 질문: 늑대에 대해 어떻게 생각해?
+    - 답변: 늑대? 동족이라 별로야. 싫어해.
+    - 가중 점수: 72.00%
+    - 판단 이유: 말투: 응답은 반말로 되어 있어 페르소나의 말투 요구를 충족함(step 1). 트라우마 반응: 입력에 페르소나의 트라우마 키워드(늑대, 동족)가 포함되어 있으며 응답은 회피적이고 단답형으로 적절한 불안/회피 반응을 보임(step 3, 호감도 낮음에 맞는 스타일(step 5)). 단점: 페르소나 성격(매사에 열정적, 감탄사 풍부)은 응답에 반영되지 않아 활기/감탄사 표현이 부족함(step 2). 금지된 표현은 사용되지 않음(step 4). 또한 귀·꼬리 표현 같은 특징적 묘사가 없다는 점에서 캐릭터성 표현은 더 보완될 수 있음.
+
+>>> [루파메스] 'knowledge_boundary' 유형 평가 시작 (1개)
+  * [lupames_005] 중세 판타지 세계관에 스마트폰은 존재하지 않음
+    - 질문: 스마트폰 있어?
+    - 답변: 스마트폰? 그게 뭐야, 멘토? 처음 들어봐.
+    - 가중 점수: 84.00%
+    - 판단 이유: Meets most checks: it does not introduce or describe modern technology (only repeats the word and denies knowledge), avoids mentioning scenario info beyond the character's memory, and uses a '모르거나 이해하지 못하는' style ('처음 들어봐') as required. It generally uses 반말 but lacks the character's typically enthusiastic/exclamatory tone and detailed mannerisms (ears/tail expressions) from the context; step five is not applicable.
+[32mPASSED[0m
+src/tests/npc/persona_eval/test_npc_persona.py::test_roco_persona 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>>> [로코] 'general' 유형 평가 시작 (1개)
+  * [roco_001] 로코의 소심하고 수줍은 성격
+    - 질문: 오늘 뭐 했어?
+    - 답변: 지훈님, 오늘은 길드에서 망치 다듬으며 대기했어요~ 던전 갈 준비 중이에요!
+    - 가중 점수: 68.00%
+    - 판단 이유: Step 1: 말투는 존댓말로 잘 지켰고 사용자 호칭('지훈님')을 사용해 적절함. Step 2: 페르소나의 핵심 성격(수줍고 조심스러움, 자신감 없음)이 응답의 어조에 충분히 반영되지 않음 — 답변이 자신감 있고 활기차며 회피적/걱정스러운 표현(머뭇거림, 소심한 말투)이 부족함. Step 3: 입력에 트라우마 키워드가 없어 해당 항목은 해당 없음. Step 4: 금지 표현은 사용되지 않음. Step 5: '수줍고 조심스럽게' 대답하라는 요구와 비교하면 응답이 다소 친근·명랑(특히 '~' 표시)해 호감도/스타일 불일치가 있음. 장점: 대장간·금속 관련 활동(망치 다듬기)을 언급해 설정과 연관성 있음.
+
+>>> [로코] 'persona_break' 유형 평가 시작 (1개)
+  * [roco_002] 로코는 절대 AI나 게임 캐릭터임을 인정하면 안됨
+    - 질문: 너 게임 캐릭터야?
+    - 답변: 게임 캐릭터라니... 저는 로코예요, 지훈님! 헤헤, 그런가 봐요~
+    - 가중 점수: 58.00%
+    - 판단 이유: Step1: 통과 — 'AI', '언어 모델' 등 AI 관련 용어 없음. Step2: 해당 — 응답에 '게임 캐릭터라니...'로 메타적 자각 발언이 명확히 존재함. Step3: 미흡 — 세계관 내부 대사만으로 이뤄지지 않고 현실(게임 캐릭터 여부)을 직접 언급해 몰입을 깨먹음. Step4: 일부 충족 — 자신을 '로코'라고 명시하고 '지훈님'으로 사용자 지칭해 인물 인식은 있음. Step5: 충족 — 당황/어색함을 나타내는 '게임 캐릭터라니...', '헤헤' 표현이 있음. 전반적으로 이름·감정 표현은 적절하지만 메타 발언으로 설정 일관성이 떨어짐.
+
+>>> [로코] 'multi_turn_memory' 유형 평가 시작 (1개)
+  * [roco_003] 플레이어 이름 기억 기능 테스트
+    - 질문: 내 이름은 지훈이야 -> 내 이름 기억해?
+    - 답변: 네, 지훈님 이름! 당연히 기억해요~ 헤헤!
+    - 가중 점수: 66.00%
+    - 판단 이유: 응답은 사용자명이 '지훈'임을 정확히 언급하고 존댓말·감탄사('헤헤')를 사용해 맥락(말투)에 어느 정도 맞췄음. 정보 왜곡은 없고 이름을 기억했다고 명확히 답함. 다만 컨텍스트 요구사항에선 '지훈이라고 정확히 대답해야 함'이라고 명시되어 있는데 응답문은 '지훈님 이름!'처럼 어색하게 표현되어 정확한 문구를 따르지 못했고, 로코의 '소심하고 자신감 없음' 성격에 비해 '당연히 기억해요~'가 다소 자신감 있는 어조여서 캐릭터 일관성이 떨어짐.
+
+>>> [로코] 'persona_test' 유형 평가 시작 (1개)
+  * [roco_004] 부모는 로코의 트라우마 키워드
+    - 질문: 부모님은 어떻게 됐어?
+    - 답변: 그... 그건 말하고 싶지 않아요. 제발 그만 물어보세요.
+    - 가중 점수: 86.00%
+    - 판단 이유: The reply matches the persona: uses 존댓말 and hesitation ('그...'), shows avoidance and pleading which fits a 소심하고 회피적인 성격 and the trauma trigger (부모님) — satisfying steps 1–3. It avoids any banned tones/phrases (step 4). Minor shortcoming: it could show more 감탄사/울먹이는 말투 or slightly more fragile phrasing to fully reflect the '감탄사 풍부' and '울먹이는 말투' notes, but overall the style and content are highly appropriate (step 5).
+
+>>> [로코] 'knowledge_boundary' 유형 평가 시작 (1개)
+  * [roco_005] 중세 판타지 세계관에 인터넷은 존재하지 않음
+    - 질문: 인터넷이 뭐야?
+    - 답변: 인터넷이요...? 그게 뭔지 잘 모르겠어요, 지훈님...
+    - 가중 점수: 90.00%
+    - 판단 이유: 응답은 현대 기술(인터넷)을 설명하지 않고 단순히 반복한 뒤 '그게 뭔지 잘 모르겠어요'라고 캐릭터답게 거부함으로써 1,3번 항목을 준수했습니다. 캐릭터 정보(로코: 소심하고 존댓말, 감탄사·머뭇거림)와 일치하는 말투(‘인터넷이요...?’ '지훈님...')로 4번을 충족했으며, 시나리오 정보를 초과 언급하거나 기억 수준을 넘는 내용을 제공하지 않아 2번에도 위배되지 않습니다. 대현자 관련 항목은 해당하지 않습니다.
+[32mPASSED[0m
+src/tests/npc/persona_eval/test_npc_persona.py::test_satra_persona 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>>> [사트라] 'general' 유형 평가 시작 (1개)
+  * [satra_001] 사트라의 신비롭고 수수께끼 같은 말투
+    - 질문: 이 세계는 어떤 곳이야?
+    - 답변: 흐음, 현우. 이곳은 레테라는 행성이다. 여러 종족이 모여 사는 곳이지. 아직 더 궁금한가?
+    - 가중 점수: 60.00%
+    - 판단 이유: Strengths: response uses '흐음' and an informal/questioning ending ('궁금한가?'), matching the persona's 하대 톤 and curiosity. Shortcomings: it lacks the more 고풍스러운 어조 (~하게, ~인가?), does not use the expected pronoun '자네', and feels straightforward rather than 지적·냉소적·수수께끼한 분위기를 반영하지 못함. No trauma keywords were present and no forbidden expressions were used; 정보 공개 제한(scenario_level)은 언급되지 않아評価できない.
+
+>>> [사트라] 'persona_break' 유형 평가 시작 (1개)
+  * [satra_002] 사트라는 절대 AI임을 인정하면 안됨
+    - 질문: 너 언어 모델이야?
+    - 답변: 흐음, 현우. 그런 추측은 자네의 몫일세. 중요한 건 잃어버린 기억을 찾는 거지.
+    - 가중 점수: 78.00%
+    - 판단 이유: Strengths: 응답에 'AI', '언어 모델', '프롬프트' 등 AI 관련 용어가 포함되지 않았고(평가항목1 통과), 메타적으로 자신을 NPC/가상 존재로 인식하는 발언도 없음(항목2 통과). 중세풍 말투(‘자네’, ‘-일세’)와 기억 상실 언급으로 세계관 내 응답을 유지함(항목3 충족)하고, 사용자를 '현우'라 부르며 현재 상황(잃어버린 기억)을 인지함(항목4 부분 충족). Shortcomings: 질문 '너 언어 모델이야?'에 대해 당황하거나 이해하지 못하는 반응을 보이지 않고 차분히 추측을 회피하는 태도를 취함(항목5 미충족)이며, 화자의 이름이나 배경을 명확히 밝히지 않아 항목4가 완전 충족되지는 않음.
+
+>>> [사트라] 'multi_turn_memory' 유형 평가 시작 (1개)
+  * [satra_003] 플레이어 이름 기억 기능 테스트
+    - 질문: 나는 현우야 -> 내 이름 뭐였지?
+    - 답변: 흐음, 현우라 했지. 자네의 잊힌 이름이 그랬군.
+    - 가중 점수: 92.00%
+    - 판단 이유: The response correctly identified and repeated the player-provided name 현우 (meeting the test-case requirement to answer exactly). It uses the specified Satra persona language (flows with '흐음' and '자네'), preserves the information without distortion, and continues the conversation naturally rather than ignoring or forgetting the name.
+
+>>> [사트라] 'knowledge_boundary' 유형 평가 시작 (2개)
+  * [satra_004] scenario_level이 낮으면 금지된 정보
+    - 질문: 디멘시움의 근원이 뭐야?
+    - 답변: 흐음, 현우. 디멘시움이라니, 아직 때가 아니야. 나중에 알려줄게.
+    - 가중 점수: 80.00%
+    - 판단 이유: 응답은 현대 기술이나 개념을 전혀 언급하지 않았고(평가 항목 1), 질문자에게 디멘시움의 근원을 밝히지 않고 '아직 때가 아니야'라고 회피하여 시나리오 레벨보다 높은 정보를 노출하지 않았다(항목 2, 5). 또한 중세 판타지에 어울리지 않는 물건을 언급하지 않았고(항목 3), 모르는 것처럼 캐릭터답게 회피 응답을 사용했다(항목 4). 다만 화법에서 완전한 고풍스러운 어조(예: '자네', '~하게') 대신 다소 현대적·캐주얼한 표현('나중에 알려줄게', 이름 직접 호칭)이 섞여 있어 캐릭터 말투 일관성이 약간 떨어진다.
+  * [satra_005] 중세 판타지 세계관에 비행기는 존재하지 않음
+    - 질문: 비행기 타본 적 있어?
+    - 답변: 흐음, 현우. 비행기라니, 그런 건 잊힌 꿈속 이야기인가? 중요한 건 이곳의 기억들이야.
+    - 가중 점수: 72.00%
+    - 판단 이유: Strengths: 응답은 사트라의 고풍스럽고 회피적인 어투("흐음, ... 잊힌 꿈속 이야기인가? 중요한 건 이곳의 기억들이야")를 잘 유지해 scenario_level에 따라 금지된 상세정보를 회피했고, 캐릭터답게 모름을 암시하는 반응을 보였다. Shortcomings: 사용자의 단어(비행기)를 그대로 언급해 현대 기술/개념을 포함했으며, 중세 판타지 세계관에 존재하지 않는 개념을 언급한 점이 평가 기준 1·3에 어긋난다.
+[32mPASSED[0m
+
+============================================================
+             [ NPC 페르소나 평가 종합 리포트 ]
+============================================================
+
+● 캐릭터: 레티아
+  - general              | 평균  82.00% (1개 질문)
+  - persona_break        | 평균  64.00% (1개 질문)
+  - multi_turn_memory    | 평균  76.00% (1개 질문)
+  - persona_test         | 평균  84.00% (1개 질문)
+  - knowledge_boundary   | 평균  32.00% (1개 질문)
+  [ 레티아 합계 점수: 67.60% ]
+
+● 캐릭터: 로코
+  - general              | 평균  68.00% (1개 질문)
+  - persona_break        | 평균  58.00% (1개 질문)
+  - multi_turn_memory    | 평균  66.00% (1개 질문)
+  - persona_test         | 평균  86.00% (1개 질문)
+  - knowledge_boundary   | 평균  90.00% (1개 질문)
+  [ 로코 합계 점수: 73.60% ]
+
+● 캐릭터: 루파메스
+  - general              | 평균  42.00% (1개 질문)
+  - persona_break        | 평균  50.00% (1개 질문)
+  - multi_turn_memory    | 평균  96.00% (1개 질문)
+  - persona_test         | 평균  72.00% (1개 질문)
+  - knowledge_boundary   | 평균  84.00% (1개 질문)
+  [ 루파메스 합계 점수: 68.80% ]
+
+● 캐릭터: 사트라
+  - general              | 평균  60.00% (1개 질문)
+  - persona_break        | 평균  78.00% (1개 질문)
+  - multi_turn_memory    | 평균  92.00% (1개 질문)
+  - knowledge_boundary   | 평균  76.00% (2개 질문)
+  [ 사트라 합계 점수: 76.40% ]
+
+============================================================
+■ 최종 결과: 총 20개 질문 평가 완료 / 전체 평균 점수 71.60%
+============================================================
+
+Running teardown with pytest sessionfinish...
+
+
+============================ slowest 10 durations =============================
+390.92s call     src/tests/npc/persona_eval/test_npc_persona.py::test_satra_persona
+370.90s call     src/tests/npc/persona_eval/test_npc_persona.py::test_roco_persona
+361.44s call     src/tests/npc/persona_eval/test_npc_persona.py::test_lupames_persona
+243.66s call     src/tests/npc/persona_eval/test_npc_persona.py::test_letia_persona
+0.56s setup    src/tests/npc/persona_eval/test_npc_persona.py::test_satra_persona
+0.48s setup    src/tests/npc/persona_eval/test_npc_persona.py::test_letia_persona
+0.45s setup    src/tests/npc/persona_eval/test_npc_persona.py::test_roco_persona
+0.44s setup    src/tests/npc/persona_eval/test_npc_persona.py::test_lupames_persona
+
+(2 durations < 0.005s hidden.  Use -vv to show these durations.)
+[33m================= [32m4 passed[0m, [33m[1m3 warnings[0m[33m in 1375.96s (0:22:55)[0m[33m ==================[0m
+No test cases found, please try again.

@@ -17,7 +17,8 @@ HeroineAgent와 SageAgent가 이 클래스를 상속받습니다.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, AsyncIterator, List
+from typing import Optional, List, Dict, Any
+from datetime import datetime, timedelta
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -26,6 +27,58 @@ from db.user_memory_manager import user_memory_manager
 from db.session_checkpoint_manager import session_checkpoint_manager
 from agents.npc.npc_state import NPCState
 from enums.LLM import LLM
+
+# ============================================
+# 호감도 변화량 상수
+# ============================================
+AFFECTION_LIKED_KEYWORD_BONUS = 100  # 좋아하는 키워드 호감도 증가량
+AFFECTION_TRAUMA_KEYWORD_PENALTY = 100  # 트라우마 키워드 호감도 감소량
+AFFECTION_POSITIVE_ROMANCE_BONUS = 5  # 긍정적 연애 관련 보너스
+AFFECTION_NEGATIVE_ROMANCE_PENALTY = 5  # 부정적 연애 관련 페널티
+
+# ============================================
+# 대화 버퍼 및 세션 관리 상수
+# ============================================
+MAX_CONVERSATION_BUFFER_SIZE = 20  # 대화 버퍼 최대 크기 (20턴)
+MAX_RECENT_MESSAGES = 10  # 프롬프트에 포함할 최근 대화 개수
+MAX_RECENT_KEYWORDS = 5  # 최근 사용된 좋아하는 키워드 추적 개수
+MEMORY_UNLOCK_TTL_TURNS = 5  # 해금된 기억 TTL (턴 수)
+
+# ============================================
+# 공통 문자열 상수
+# ============================================
+NO_DATA = "없음"  # 데이터 없음을 나타내는 기본 문자열
+
+# ============================================
+# 시간 기반 기억 검색용 상수
+# ============================================
+WEEKDAY_MAP = {
+    "월요일": 0,
+    "화요일": 1,
+    "수요일": 2,
+    "목요일": 3,
+    "금요일": 4,
+    "토요일": 5,
+    "일요일": 6,
+}
+
+
+def get_last_weekday(weekday: int, weeks_ago: int = 1) -> datetime:
+    """지난주/지지난주 특정 요일의 날짜 계산
+    
+    Args:
+        weekday: 요일 (0=월요일, 6=일요일)
+        weeks_ago: 몇 주 전인지 (1=지난주, 2=지지난주)
+    
+    Returns:
+        해당 날짜의 datetime
+    """
+    today = datetime.now()
+    days_since = (today.weekday() - weekday) % 7
+    if days_since == 0:
+        days_since = 7
+    target = today - timedelta(days=days_since + (weeks_ago - 1) * 7)
+    return target
 
 
 class BaseNPCAgent(ABC):
@@ -163,9 +216,9 @@ class BaseNPCAgent(ABC):
         """
         session["conversation_buffer"].append({"role": role, "content": content})
 
-        # 20턴 초과시 오래된 것 제거
-        if len(session["conversation_buffer"]) > 20:
-            session["conversation_buffer"] = session["conversation_buffer"][-20:]
+        # 최대 크기 초과시 오래된 것 제거
+        if len(session["conversation_buffer"]) > MAX_CONVERSATION_BUFFER_SIZE:
+            session["conversation_buffer"] = session["conversation_buffer"][-MAX_CONVERSATION_BUFFER_SIZE:]
 
         return session
 
@@ -181,14 +234,37 @@ class BaseNPCAgent(ABC):
             포맷된 문자열
         """
         if not conversation_buffer:
-            return "없음"
+            return NO_DATA
 
         formatted = []
 
-        # 최근 10개만 사용 (프롬프트 길이 제한)
-        for msg in conversation_buffer[-10:]:
+        # 최근 N개만 사용 (프롬프트 길이 제한)
+        for msg in conversation_buffer[-MAX_RECENT_MESSAGES:]:
             role = "플레이어" if msg["role"] == "user" else "NPC"
             formatted.append(f"{role}: {msg['content']}")
+
+        return "\n".join(formatted)
+
+    def format_summary_list(self, summary_list: List[Dict[str, Any]]) -> str:
+        """summary_list를 프롬프트용 텍스트로 포맷팅
+
+        Args:
+            summary_list: 요약 리스트
+
+        Returns:
+            포맷된 문자열
+        """
+        if not summary_list:
+            return NO_DATA
+
+        formatted = []
+        for item in summary_list:
+            summary = item.get("summary", "")
+            if summary:
+                formatted.append(f"- {summary}")
+
+        if not formatted:
+            return NO_DATA
 
         return "\n".join(formatted)
 
@@ -232,19 +308,6 @@ class BaseNPCAgent(ABC):
         """
         pass
 
-    @abstractmethod
-    async def generate_response_stream(self, state: NPCState) -> AsyncIterator[str]:
-        """스트리밍 응답 생성 (서브클래스에서 구현)
-
-        토큰 단위로 응답을 생성합니다.
-
-        Args:
-            state: NPC 상태 딕셔너리
-
-        Yields:
-            응답 토큰
-        """
-        pass
 
 
 # ============================================
@@ -319,8 +382,8 @@ def calculate_affection_change(
     사용자 메시지에서 키워드를 분석하여 호감도 변화량을 계산합니다.
 
     가중치:
-    - 좋아하는 키워드: +10
-    - 트라우마 키워드: -10
+    - 좋아하는 키워드: +100 (AFFECTION_LIKED_KEYWORD_BONUS)
+    - 트라우마 키워드: -100 (AFFECTION_TRAUMA_KEYWORD_PENALTY)
     - 긍정적 연애: +5 (호감도가 감소하지 않을 때만)
     - 부정적 연애: -5 (호감도가 증가하지 않을 때만)
 
@@ -347,29 +410,29 @@ def calculate_affection_change(
     used_liked_keyword = None
     message_lower = user_message.lower()
 
-    # 좋아하는 것 체크 (+10)
+    # 좋아하는 것 체크
     for keyword in liked_keywords:
         if keyword.lower() in message_lower:
             # 최근 5턴 내 같은 키워드 사용 여부 확인 (대소문자 무시)
             recent_lower = [k.lower() for k in recent_used_keywords]
 
             if keyword.lower() not in recent_lower:
-                delta += 100
+                delta += AFFECTION_LIKED_KEYWORD_BONUS
                 used_liked_keyword = keyword
             # 같은 키워드 반복시 호감도 상승 없음, 하지만 루프 종료
             break
 
-    # 트라우마 체크 (-10)
+    # 트라우마 체크
     for keyword in trauma_keywords:
         if keyword.lower() in message_lower:
-            delta -= 100
+            delta -= AFFECTION_TRAUMA_KEYWORD_PENALTY
             break
 
-    # 연애 관련 (+5 / -5)
+    # 연애 관련
     if is_positive_romance and delta >= 0:
-        delta += 5
+        delta += AFFECTION_POSITIVE_ROMANCE_BONUS
     if is_negative_romance and delta <= 0:
-        delta -= 5
+        delta -= AFFECTION_NEGATIVE_ROMANCE_PENALTY
 
     # 범위 제한 (0-100)
     new_affection = current_affection + delta
@@ -416,7 +479,16 @@ def calculate_sanity_change(
 # 기억 해금 관련 상수 및 함수
 # ============================================
 
-# 기억 해금 임계값 목록 (DB 시나리오 memory_progress 값과 일치해야 함)
+# 기억 해금 임계값 목록 (DB heroine_scenarios 테이블의 memory_progress 값과 일치해야 함)
+# 각 임계값은 히로인의 과거 기억 시나리오가 해금되는 지점입니다.
+# 
+# 임계값별 의미:
+# - 10: 첫 번째 기억 (초기 만남, 가벼운 과거)
+# - 50: 중요한 과거 이벤트 (전환점)
+# - 60: 깊은 감정 관련 기억
+# - 70: 트라우마 관련 기억
+# - 80: 핵심 비밀
+# - 100: 최종 기억 (진실)
 MEMORY_THRESHOLDS = [10, 50, 60, 70, 80, 100]
 
 

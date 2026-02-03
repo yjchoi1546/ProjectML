@@ -23,6 +23,7 @@ PostgreSQL + pgvector + PGroonga 기반 4요소 하이브리드 검색
 
 import json
 import uuid
+import logging
 from typing import List, Optional
 from datetime import datetime
 from sqlalchemy import create_engine, text
@@ -33,7 +34,11 @@ from enums.LLM import LLM
 
 load_dotenv()
 
+# 로거 설정
+logger = logging.getLogger("user_memory")
+
 from db.config import CONNECTION_URL
+from utils.langfuse_tracker import tracker
 from db.user_memory_models import (
     Speaker,
     Subject,
@@ -119,22 +124,42 @@ Your goal is to extract key facts from the conversation to be stored in the long
    - Examples: "I'm Minsu", "Call me Minsu", "My name is Kim Minsu", "나 민수야", "민수라고 불러"
    - Extract ONLY the name itself, not the full sentence.
 
-[Extraction Criteria & Content Types]
+[Extraction Criteria & Content Types - ONLY THESE 5 TYPES]
 - "preference": Likes/Dislikes (e.g., Food, Color, Hobbies).
 - "trait": Personality, Appearance, Habits.
 - "event": Shared experiences or specific actions taken.
 - "opinion": Evaluation of others/situations (e.g., "Thinks user is kind").
 - "personal": Biographical info (Name, Job, Age).
-- "world": New information about the world/lore.
 
-[Importance Scale]
-- 1-3: Trivial details.
-- 4-6: General information.
-- 7-8: Meaningful/Important.
+[DO NOT EXTRACT - EXCLUDED TYPE]
+- "world": World-building, lore, scenario information about the heroine's world. This is pre-defined content, NOT user memory.
+
+[Importance Scale - BE STRICTLY OBJECTIVE]
+- 1-4: Trivial/Low value (DO NOT SAVE - greetings, small talk, filler, vague statements).
+- 5-6: General but meaningful information (worth saving).
+- 7-8: Important information.
 - 9-10: Critical (Trauma, Secrets, Core relationship changes).
 
+IMPORTANT: Do NOT inflate importance scores just to save something.
+If nothing meaningful is said, return an empty array.
+Most casual conversations should result in [].
+
+[CRITICAL - When NOT to Save]
+Return an EMPTY array [] in these cases:
+- Simple greetings: "Hi", "Hello", "Good morning", "안녕", "반가워"
+- Small talk with no substance: "How are you?", "What are you doing?"
+- Filler responses: "Okay", "I see", "Hmm", "알겠어", "그렇구나"
+- Repeated information already known
+- Vague statements with no concrete facts
+- Any world/lore/scenario information (heroine's backstory, world setting, etc.)
+- Conversations that reveal NO new personal facts about the user
+
 [Output Format - JSON Array]
-Return a JSON array of up to **2** objects. If nothing is worth saving, return [].
+Return a JSON array of **0 to 2** objects.
+- Only extract facts with importance >= 5.
+- Only use types: preference, trait, event, opinion, personal.
+- Do NOT force extraction. Quality over quantity.
+- It is NORMAL and EXPECTED to return [] for most casual conversations.
 
 Example 1 (Concrete - Preference):
 Input: "I've been really into grapes lately."
@@ -182,7 +207,16 @@ Output:
 ]
 """
 
-        response = await self.extract_llm.ainvoke(prompt)
+        # LangFuse 토큰 추적 (v3 API)
+        config = tracker.get_langfuse_config(
+            tags=["memory", "fact_extraction", f"heroine:{heroine_id}"],
+            metadata={
+                "heroine_id": heroine_id,
+                "conversation_length": len(conversation)
+            }
+        )
+        
+        response = await self.extract_llm.ainvoke(prompt, **config)
 
         # JSON 파싱
         try:
@@ -194,28 +228,71 @@ Output:
                 content = content.split("```")[1].split("```")[0]
 
             facts_data = json.loads(content.strip())
-            # JSON 파서는 앞뒤 공백에 민감할 수 있어서, 안전하게 한 번 더 제거
+            
+            # 로그: LLM 응답 결과 요약
+            logger.info(f"[MEMORY] ===== Fact Extraction Result =====")
+            logger.info(f"[MEMORY] Conversation: {conversation[:100]}...")
+            logger.info(f"[MEMORY] LLM returned {len(facts_data)} fact(s)")
+            
+            # 빈 배열인 경우 명시적 로그
+            if not facts_data:
+                logger.info(f"[MEMORY] EMPTY ARRAY returned - No meaningful facts to save")
+                logger.info(f"[MEMORY] Reason: Conversation likely contains only greetings/small talk/trivial content")
+                return []
 
-            # ExtractedFact 객체로 변환
+            # ExtractedFact 객체로 변환 (2차 안전장치 필터링 포함)
             facts = []
-            for item in facts_data:
+            filtered_count = 0
+            
+            for idx, item in enumerate(facts_data):
+                importance = item.get("importance", 5)
+                content_type = item.get("content_type", "")
+                fact_content = item.get("content", "")[:80]
+                
+                logger.debug(f"[MEMORY] Processing fact #{idx+1}: type={content_type}, importance={importance}")
+                logger.debug(f"[MEMORY]   Content: {fact_content}")
+                
+                # 2차 안전장치: importance < 5 필터링
+                if importance < 5:
+                    logger.info(f"[MEMORY] FILTERED (importance={importance} < 5): {fact_content}")
+                    filtered_count += 1
+                    continue
+                
+                # 2차 안전장치: world 타입 필터링 (히로인 세계관/시나리오 정보 제외)
+                if content_type == "world":
+                    logger.info(f"[MEMORY] FILTERED (type=world, not user memory): {fact_content}")
+                    filtered_count += 1
+                    continue
+                
+                # 저장 대상 fact 로그
+                logger.info(f"[MEMORY] ACCEPTED: type={content_type}, importance={importance}, content={fact_content}")
+                
                 keywords = item.get("keywords", []) or []
                 player_name = item.get("player_name")
                 fact = ExtractedFact(
                     speaker=Speaker(item["speaker"]),
                     subject=Subject(item["subject"]),
-                    content_type=ContentType(item["content_type"]),
+                    content_type=ContentType(content_type),
                     content=item["content"],
-                    importance=item.get("importance", 5),
+                    importance=importance,
                     keywords=keywords,
                     player_name=player_name,
                 )
                 facts.append(fact)
 
+            # 최종 결과 로그
+            logger.info(f"[MEMORY] ===== Extraction Summary =====")
+            logger.info(f"[MEMORY] Total from LLM: {len(facts_data)}, Filtered: {filtered_count}, To Save: {len(facts)}")
+            if not facts:
+                logger.info(f"[MEMORY] RESULT: Nothing to save after filtering")
+            else:
+                logger.info(f"[MEMORY] RESULT: {len(facts)} fact(s) will be saved")
+            
             return facts
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            print(f"[ERROR] Fact 추출 파싱 실패: {e}")
+            logger.error(f"[MEMORY] Fact extraction parsing failed: {e}")
+            logger.error(f"[MEMORY] Raw response: {response.content[:200] if response.content else 'None'}")
             return []
 
     # ============================================
@@ -350,6 +427,11 @@ Output:
                 "extracted_player_name": 추출된 플레이어 이름 또는 None
             }
         """
+        logger.info(f"[MEMORY] ========== SAVE CONVERSATION START ==========")
+        logger.info(f"[MEMORY] Player: {player_id}, Heroine: {heroine_id}")
+        logger.info(f"[MEMORY] User: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
+        logger.info(f"[MEMORY] NPC: {npc_response[:100]}{'...' if len(npc_response) > 100 else ''}")
+        
         # 대화 포맷
         conversation = f"플레이어: {user_message}\n{heroine_id}: {npc_response}"
 
@@ -358,6 +440,8 @@ Output:
         facts = facts[:2]
 
         if not facts:
+            logger.info(f"[MEMORY] FINAL RESULT: No facts to save - skipping DB insert")
+            logger.info(f"[MEMORY] ========== SAVE CONVERSATION END (0 saved) ==========")
             return {"memory_ids": [], "preference_changes": [], "extracted_player_name": None}
 
         # 각 fact 저장
@@ -365,21 +449,28 @@ Output:
         preference_changes = []
         extracted_player_name = None
 
-        for fact in facts:
+        for idx, fact in enumerate(facts):
+            logger.info(f"[MEMORY] Saving fact #{idx+1} to DB...")
             result = await self.add_memory(player_id, heroine_id, fact)
             if result["memory_id"]:
                 memory_ids.append(result["memory_id"])
+                logger.info(f"[MEMORY] Saved with ID: {result['memory_id']}")
 
             # 무효화된 기억이 있으면 취향 변화로 기록
             for inv in result["invalidated"]:
                 preference_changes.append({"old": inv["content"], "new": fact.content})
+                logger.info(f"[MEMORY] Preference changed: '{inv['content'][:50]}' -> '{fact.content[:50]}'")
 
             # 이름 추출 시도
             if extracted_player_name is None:
                 name = self._extract_player_name(fact)
                 if name:
                     extracted_player_name = name
+                    logger.info(f"[MEMORY] Player name extracted: {name}")
 
+        logger.info(f"[MEMORY] FINAL RESULT: {len(memory_ids)} fact(s) saved to user_memories")
+        logger.info(f"[MEMORY] ========== SAVE CONVERSATION END ({len(memory_ids)} saved) ==========")
+        
         return {
             "memory_ids": memory_ids,
             "preference_changes": preference_changes,
@@ -683,7 +774,13 @@ Output:
 
 충돌이면 "yes", 아니면 "no"만 응답하세요."""
 
-        response = await self.extract_llm.ainvoke(prompt)
+        # LangFuse 토큰 추적 (v3 API)
+        config = tracker.get_langfuse_config(
+            tags=["memory", "conflict_check"],
+            metadata={"action": "conflict_detection"}
+        )
+        
+        response = await self.extract_llm.ainvoke(prompt, **config)
         answer = response.content.strip().lower()
 
         return answer == "yes"

@@ -38,9 +38,7 @@ app.include_router(dungeon_router)
 app.include_router(common_router)
 
 
-logger = logging.getLogger("stt")
-logger.setLevel(logging.INFO)
-
+# 로그 포맷 설정
 _fmt = logging.Formatter(
     fmt="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -48,7 +46,16 @@ _fmt = logging.Formatter(
 
 ch = logging.StreamHandler()
 ch.setFormatter(_fmt)
+
+# STT 로거
+logger = logging.getLogger("stt")
+logger.setLevel(logging.INFO)
 logger.addHandler(ch)
+
+# User Memory 로거 (fact 추출/저장 과정 추적)
+memory_logger = logging.getLogger("user_memory")
+memory_logger.setLevel(logging.INFO)  # DEBUG로 변경하면 더 상세한 로그 출력
+memory_logger.addHandler(ch)
 
 import uuid
 @app.middleware("http")

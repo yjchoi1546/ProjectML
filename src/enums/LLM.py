@@ -31,6 +31,7 @@ class LLM(StrEnum):
 
     # Grok 4 계열 (현 시점 최고 성능 모델군)
     GROK_4_1_FAST_REASONING = "grok-4-1-fast-reasoning"
+    GROK_4_1_FAST_NON_REASONING = "grok-4-1-fast-non-reasoning"
     GROK_4_FAST_REASONING = "grok-4-fast-reasoning"
     GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning"
     GROK_4 = "grok-4"

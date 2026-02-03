@@ -17,8 +17,9 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from sqlalchemy import create_engine, text
 from langchain.chat_models import init_chat_model
-
+from enums.LLM import LLM
 from db.config import CONNECTION_URL
+from utils.langfuse_tracker import tracker
 
 
 class SessionCheckpointManager:
@@ -27,7 +28,7 @@ class SessionCheckpointManager:
     def __init__(self):
         """초기화"""
         self.engine = create_engine(CONNECTION_URL, pool_pre_ping=True)
-        self.llm = init_chat_model(model="gpt-4o-mini", temperature=0.3)
+        self.llm = init_chat_model(model=LLM.GPT5_MINI)
 
     def save_checkpoint_background(
         self,
@@ -128,7 +129,17 @@ class SessionCheckpointManager:
 요약: (2-3문장 요약)
 중요도: (1-5 숫자만)"""
 
-            response = await self.llm.ainvoke(prompt)
+            # LangFuse 토큰 추적 (v3 API)
+            config = tracker.get_langfuse_config(
+                tags=["summary", "checkpoint", f"npc:{npc_id}"],
+                user_id=player_id,
+                metadata={
+                    "npc_id": npc_id,
+                    "conversation_count": len(conversations),
+                }
+            )
+            
+            response = await self.llm.ainvoke(prompt, **config)
             content = response.content
 
             lines = content.strip().split("\n")
